@@ -17,11 +17,67 @@ func plainText(content string) map[string]any {
 	return map[string]any{"tag": "plain_text", "content": content}
 }
 
+// cardTextContent extracts and concatenates all text content from card elements.
+func cardTextContent(card *core.Card) string {
+	if card == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, elem := range card.Elements {
+		switch e := elem.(type) {
+		case core.CardMarkdown:
+			sb.WriteString(e.Content)
+			sb.WriteString(" ")
+		case core.CardNote:
+			sb.WriteString(e.Text)
+			sb.WriteString(" ")
+		case core.CardActions:
+			for _, btn := range e.Buttons {
+				sb.WriteString(btn.Text)
+				sb.WriteString(" ")
+			}
+		case core.CardListItem:
+			sb.WriteString(e.Text)
+			sb.WriteString(" ")
+		}
+	}
+	return sb.String()
+}
+
+// cardContainsMention checks whether a card's text content contains mentions.
+// It resolves @name patterns via chat member lookup and returns true if any
+// <at> tags are found (either pre-existing or newly resolved).
+// Returns (true, resolvedContent) if mention found, (false, "") otherwise.
+func (p *interactivePlatform) cardContainsMention(ctx context.Context, chatID string, card *core.Card) (bool, string) {
+	text := cardTextContent(card)
+	if text == "" {
+		return false, ""
+	}
+	// Quick pre-check: if no "@" and no "<at " in text, no mentions possible.
+	if !strings.Contains(text, "@") && !strings.Contains(text, "<at ") {
+		return false, ""
+	}
+	resolved := p.Platform.resolveMentionsInContent(ctx, chatID, text)
+	if strings.Contains(resolved, "<at ") {
+		return true, resolved
+	}
+	return false, ""
+}
+
 // ReplyCard sends a structured card as a reply to the original message.
+// If the card content contains mentions, it falls back to Post (rich text)
+// format because card <at> tags are visual-only and don't trigger bot events.
 func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *core.Card) error {
 	rc, ok := rctx.(replyContext)
 	if !ok {
 		return fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
+	}
+
+	hasMention, _ := p.cardContainsMention(ctx, rc.chatID, card)
+	if hasMention {
+		slog.Info(p.tag() + ": card contains mention, falling back to post format")
+		content := card.RenderText()
+		return p.Platform.Reply(ctx, rctx, content)
 	}
 
 	cardJSON := renderCard(card, rc.sessionKey)
@@ -35,6 +91,8 @@ func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *cor
 }
 
 // SendCard sends a structured card as a new message to the chat.
+// If the card content contains mentions, it falls back to Post (rich text)
+// format because card <at> tags are visual-only and don't trigger bot events.
 func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core.Card) error {
 	rc, ok := rctx.(replyContext)
 	if !ok {
@@ -46,6 +104,13 @@ func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core
 
 	if !p.noReplyToTrigger && p.shouldReplyInThread(rc) {
 		return p.ReplyCard(ctx, rctx, card)
+	}
+
+	hasMention, _ := p.cardContainsMention(ctx, rc.chatID, card)
+	if hasMention {
+		slog.Info(p.tag() + ": card contains mention, falling back to post format")
+		content := card.RenderText()
+		return p.Platform.Send(ctx, rctx, content)
 	}
 
 	cardJSON := renderCard(card, rc.sessionKey)

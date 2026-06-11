@@ -14326,3 +14326,97 @@ func TestHandlePendingPermission_StalePermissionCallback_Dropped(t *testing.T) {
 		}
 	})
 }
+
+// TestProcessInteractiveEvents_RichCard_MentionFallback verifies that when the
+// agent response contains <at> tags (mentioning other bots/users), the rich card
+// path is skipped and the message is sent via the normal p.Send path instead.
+// Interactive cards render <at> tags visually but don't populate the mentions
+// field that triggers im.message.receive_v1 events for bots.
+func TestProcessInteractiveEvents_RichCard_MentionFallback(t *testing.T) {
+	p := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		style:              "card",
+		supportPayload:     true,
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{
+		ThinkingMessages: true,
+		ThinkingMaxLen:   300,
+		ToolMaxLen:       500,
+		ToolMessages:     true,
+		Mode:             "full",
+		CardMode:         "rich",
+	})
+
+	// Case 1: Response with <at> tag should NOT use rich card path
+	sessionKey := "feishu:user-rich-mention"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-rich-mention")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     "ctx-rich-mention",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	mentionContent := `<at user_id="ou_abc">Alice</at> please review the design`
+	agentSession.events <- Event{Type: EventText, Content: mentionContent}
+	agentSession.events <- Event{Type: EventResult, Content: mentionContent, Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-rich-mention", time.Now(), nil, nil, state.replyCtx)
+
+	// With <at> tag, rich card path should be skipped; message goes through p.Send
+	sent := p.getSent()
+	if len(sent) == 0 {
+		t.Fatal("expected at least one p.Send call when response contains <at> tag")
+	}
+	// The sent content should contain the mention text (not a rich card)
+	found := false
+	for _, s := range sent {
+		if strings.Contains(s, "ou_abc") || strings.Contains(s, "Alice") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("sent content should mention Alice/ou_abc, got: %v", sent)
+	}
+
+	// Case 2: Response WITHOUT <at> tag should still use rich card path
+	p2 := &stubCompactProgressPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		style:              "card",
+		supportPayload:     true,
+	}
+	e2 := NewEngine("test", &stubAgent{}, []Platform{p2}, "", LangEnglish)
+	e2.SetDisplayConfig(DisplayCfg{
+		ThinkingMessages: true,
+		ThinkingMaxLen:   300,
+		ToolMaxLen:       500,
+		ToolMessages:     true,
+		Mode:             "full",
+		CardMode:         "rich",
+	})
+	sessionKey2 := "feishu:user-rich-no-mention"
+	session2 := e2.sessions.GetOrCreateActive(sessionKey2)
+	agentSession2 := newControllableSession("s-rich-no-mention")
+	state2 := &interactiveState{
+		agentSession: agentSession2,
+		platform:     p2,
+		replyCtx:     "ctx-rich-no-mention",
+	}
+	e2.interactiveStates[sessionKey2] = state2
+
+	plainContent := "Here is the design document for review."
+	agentSession2.events <- Event{Type: EventText, Content: plainContent}
+	agentSession2.events <- Event{Type: EventResult, Content: plainContent, Done: true}
+
+	e2.processInteractiveEvents(state2, session2, e2.sessions, sessionKey2, "m-rich-no-mention", time.Now(), nil, nil, state2.replyCtx)
+
+	// Without <at> tag, rich card path should be used (preview start + update)
+	starts := p2.getPreviewStarts()
+	edits := p2.getPreviewEdits()
+	if len(starts) == 0 && len(edits) == 0 {
+		t.Error("expected rich card preview/update when response has no <at> tag")
+	}
+}

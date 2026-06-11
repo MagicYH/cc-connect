@@ -2364,9 +2364,11 @@ func (p *Platform) Send(ctx context.Context, rctx any, content string) error {
 }
 
 // SendWithStatusFooter implements core.StatusFooterSender: send a reply with
-// the body content followed by a small/dim status-footer block. Always uses
-// the interactive card path so the footer can render with text_size:
-// "notation". Falls back to plain Send when the footer is empty.
+// the body content followed by a small/dim status-footer block. For plain-text
+// content, uses MsgTypePost with the footer rendered as italic text (no card
+// chrome). For markdown content, uses the interactive card path so the footer
+// can render with text_size: "notation". Falls back to plain Send when the
+// footer is empty.
 func (p *Platform) SendWithStatusFooter(ctx context.Context, rctx any, content, footer string) error {
 	if strings.TrimSpace(footer) == "" {
 		return p.Send(ctx, rctx, content)
@@ -2376,6 +2378,24 @@ func (p *Platform) SendWithStatusFooter(ctx context.Context, rctx any, content, 
 		return fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
 	}
 	content = p.resolveMentionsInContent(ctx, rc.chatID, content)
+	// Card <at> tags are visual-only and don't trigger mention events.
+	// Fall back to Post format so mentions work correctly.
+	if containsAtTag(content) {
+		slog.Info(p.tag() + ": status footer card contains mention, falling back to post format")
+		return p.Send(ctx, rctx, content)
+	}
+	// For plain-text content, append the footer as italic text via MsgTypePost.
+	// Post format renders Markdown (including italic) without the card chrome,
+	// giving a more natural chat appearance for simple messages.
+	if !containsMarkdown(content) {
+		combined := content + "\n\n*" + footer + "*"
+		body := buildPostMdJSON(combined)
+		if p.shouldUseThreadOrReplyAPI(rc) {
+			return p.replyMessage(ctx, rc, larkim.MsgTypePost, body)
+		}
+		return p.sendNewMessageToChat(ctx, rc, larkim.MsgTypePost, body)
+	}
+	// Markdown content: use interactive card for best rendering (schema 2.0).
 	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
 	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
 	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
@@ -2744,8 +2764,10 @@ func containsMarkdown(s string) bool {
 // When present, the message must NOT be sent as an interactive card,
 // because card <at> tags only render visually and don't populate the
 // mentions field that triggers im.message.receive_v1 for bots.
+// Also detects the JSON-escaped form <at which appears after
+// json.Marshal encodes < in string values.
 func containsAtTag(content string) bool {
-	return strings.Contains(content, "<at ")
+	return strings.Contains(content, "<at ") || strings.Contains(content, "\\u003cat ")
 }
 
 // buildPostJSON converts markdown content to Feishu post (rich text) format.
@@ -3950,6 +3972,14 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 	var cardID string      // cardkit-v1 entity id (empty = no streaming text path)
 	if isCardJSON(content) {
 		cardJSON = content
+		// Card <at> tags are visual-only and don't trigger mention events.
+		// Check BEFORE createCardEntity to avoid wasting a card entity on content
+		// that will be discarded in favor of Post format anyway.
+		if containsAtTag(cardJSON) {
+			slog.Info(p.tag()+": preview card contains mention, skipping for post fallback",
+				"chat_id", chatID)
+			return nil, core.ErrNotSupported
+		}
 		// Try cardkit-v1 two-step flow regardless of Reply vs Create. Both
 		// Im.Message.Reply and Im.Message.Create accept the {type:card,data:{card_id}}
 		// content schema (verified by direct API call); skipping Reply mode would
@@ -3965,6 +3995,12 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 	} else {
 		cardJSON = buildPreviewCardJSON(content)
 		sendContent = cardJSON
+		// Card <at> tags are visual-only and don't trigger mention events.
+		if containsAtTag(sendContent) {
+			slog.Info(p.tag()+": preview card contains mention, skipping for post fallback",
+				"chat_id", chatID)
+			return nil, core.ErrNotSupported
+		}
 	}
 
 	var msgID string
@@ -4161,6 +4197,12 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 		}
 		cardJSON = buildCardJSON(sanitizeMarkdownURLs(processed))
 	}
+	// Card <at> tags are visual-only and don't trigger mention events.
+	// Fall back to Post format so mentions work correctly.
+	if containsAtTag(cardJSON) {
+		return p.mentionFallback(ctx, h, content)
+	}
+
 	// Route card-entity-bound messages to cardkit-v1 full-card update API.
 	// Im.Message.Patch on entity-referenced messages is silently no-op for the
 	// card body / header — only inline card JSON messages can be patched that way.
@@ -4188,12 +4230,14 @@ func (p *Platform) UpdateMessageWithStatusFooter(ctx context.Context, previewHan
 	if !ok {
 		return fmt.Errorf("%s: invalid preview handle type %T", p.tag(), previewHandle)
 	}
-	// Mirror UpdateMessage's existing behavior: it does not resolve
-	// @mentions on the card-edit path either. SendWithStatusFooter does
-	// resolve since the matching Send path resolves on the chat-thread API.
 	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
 	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
 	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
+	// Card <at> tags are visual-only and don't trigger mention events.
+	// Fall back to Post format so mentions work correctly.
+	if containsAtTag(cardJSON) {
+		return p.mentionFallback(ctx, h, content)
+	}
 	// Same card-entity routing as UpdateMessage above.
 	h.mu.Lock()
 	cardID := h.cardID
@@ -4326,6 +4370,25 @@ func (p *Platform) DeletePreviewMessage(ctx context.Context, previewHandle any) 
 			return nil
 		})
 	})
+}
+
+// mentionFallback handles the case where a card update would contain @mentions.
+// It deletes the existing streaming card and re-sends the content via Post
+// (rich text) so that <at> tags trigger mention events for bots.
+// The footer is discarded because Post format doesn't support it;
+// working mentions take priority over status footers.
+func (p *Platform) mentionFallback(ctx context.Context, h *feishuPreviewHandle, content string) error {
+	slog.Info(p.tag()+": card contains mention, falling back to post format",
+		"chat_id", h.chatID, "message_id", h.messageID)
+	// Delete the existing streaming card
+	if err := p.DeletePreviewMessage(ctx, h); err != nil {
+		slog.Warn(p.tag()+": failed to delete card before mention fallback", "error", err)
+	}
+	// Build a replyContext from the preview handle's stored info
+	rc := replyContext{chatID: h.chatID, messageID: h.messageID}
+	// Send via Post path — resolveMentionsInContent + buildReplyContent will
+	// detect <at> tags and use MsgTypePost automatically.
+	return p.Send(ctx, rc, content)
 }
 
 // SendAudio uploads audio bytes to Feishu and sends a voice message.

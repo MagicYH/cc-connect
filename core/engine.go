@@ -5023,7 +5023,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					cardMessageID = nil
 				}
 				slog.Info("silent reply suppressed", "session", session.ID)
-			} else if hasRichCard {
+			} else if hasRichCard && !strings.Contains(fullResponse, "<at ") && !strings.Contains(fullResponse, "\u003cat ") {
+				// Rich card path: interactive cards render <at> tags visually
+				// but don't populate the mentions field that triggers bot
+				// events. When the response contains <at> tags (mentioning
+				// other bots or users), skip the rich card path so the
+				// normal p.Send path can fall back to MsgTypePost where
+				// mentions work correctly.
 				parts := []string{fullResponse}
 				if splitter, ok := p.(MarkdownTableSplitter); ok {
 					parts = splitter.SplitMarkdownByTables(fullResponse, 5)

@@ -1,11 +1,14 @@
 package feishu
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chenhg5/cc-connect/core"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func decodeRenderedCard(t *testing.T, card *core.Card) map[string]any {
@@ -310,5 +313,325 @@ func TestBuildCardJSONWithStatusFooter_EmptyFooterFallsThrough(t *testing.T) {
 	// whitespace-only footer also falls through
 	if got := buildCardJSONWithStatusFooter(body, "   \n  "); got != b {
 		t.Errorf("whitespace footer should fall through to buildCardJSON")
+	}
+}
+
+func TestCardTextContent(t *testing.T) {
+	tests := []struct {
+		name string
+		card *core.Card
+		want string
+	}{
+		{
+			name: "nil card",
+			card: nil,
+			want: "",
+		},
+		{
+			name: "empty card",
+			card: &core.Card{},
+			want: "",
+		},
+		{
+			name: "markdown only",
+			card: &core.Card{Elements: []core.CardElement{
+				core.CardMarkdown{Content: "hello world"},
+			}},
+			want: "hello world ",
+		},
+		{
+			name: "all element types",
+			card: &core.Card{Elements: []core.CardElement{
+				core.CardMarkdown{Content: "intro"},
+				core.CardDivider{},
+				core.CardActions{Buttons: []core.CardButton{
+					{Text: "Yes", Value: "v1"},
+					{Text: "No", Value: "v2"},
+				}},
+				core.CardNote{Text: "footnote"},
+				core.CardListItem{Text: "item text", BtnText: "Go"},
+			}},
+			want: "intro Yes No footnote item text ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cardTextContent(tt.card)
+			if got != tt.want {
+				t.Errorf("cardTextContent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCardContainsMention(t *testing.T) {
+	p := &interactivePlatform{
+		Platform: &Platform{
+			resolveMentions: true,
+		},
+	}
+	// Pre-populate chat member cache so resolveMentionsInContent can find members.
+	p.Platform.chatMemberCache.Store("oc_test", &chatMemberEntry{
+		members:   map[string]string{"Alice": "ou_alice", "Bob": "ou_bob"},
+		fetchedAt: time.Now(),
+	})
+
+	tests := []struct {
+		name      string
+		card      *core.Card
+		chatID    string
+		wantMention bool
+	}{
+		{
+			name:      "no mention",
+			card:      core.NewCard().Markdown("hello world").Build(),
+			chatID:    "oc_test",
+			wantMention: false,
+		},
+		{
+			name:      "at-name resolves to mention",
+			card:      core.NewCard().Markdown("hey @Alice check this").Build(),
+			chatID:    "oc_test",
+			wantMention: true,
+		},
+		{
+			name:      "pre-existing at tag",
+			card:      core.NewCard().Markdown(`<at user_id="ou_bob">Bob</at> hello`).Build(),
+			chatID:    "oc_test",
+			wantMention: true,
+		},
+		{
+			name:      "unknown name not resolved",
+			card:      core.NewCard().Markdown("@UnknownPerson hello").Build(),
+			chatID:    "oc_test",
+			wantMention: false,
+		},
+		{
+			name:      "mention in note element",
+			card:      core.NewCard().Markdown("body").Note("@Alice see this").Build(),
+			chatID:    "oc_test",
+			wantMention: true,
+		},
+		{
+			name:      "mention in list item",
+			card:      core.NewCard().ListItem("@Alice task", "Done", "act:/done").Build(),
+			chatID:    "oc_test",
+			wantMention: true,
+		},
+		{
+			name:      "empty chatID skips resolution",
+			card:      core.NewCard().Markdown("@Alice hello").Build(),
+			chatID:    "",
+			wantMention: false,
+		},
+		{
+			name:      "at in button text",
+			card:      core.NewCard().Buttons(core.DefaultBtn("@Alice", "act:/ping")).Build(),
+			chatID:    "oc_test",
+			wantMention: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hasMention, _ := p.cardContainsMention(context.Background(), tt.chatID, tt.card)
+			if hasMention != tt.wantMention {
+				t.Errorf("cardContainsMention() = %v, want %v", hasMention, tt.wantMention)
+			}
+		})
+	}
+}
+
+func TestContainsAtTag(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "no at tag",
+			content: "hello world",
+			want:    false,
+		},
+		{
+			name:    "at tag with user_id",
+			content: `<at user_id="ou_abc">Alice</at> hello`,
+			want:    true,
+		},
+		{
+			name:    "at tag with id attribute",
+			content: `<at id=ou_abc></at>`,
+			want:    true,
+		},
+		{
+			name:    "at tag in json.Marshal output (escaped)",
+			content: buildCardJSON(`<at user_id="ou_abc">Alice</at> hello`),
+			want:    true,
+		},
+		{
+			name:    "plain @ sign not a tag",
+			content: "@Alice hello",
+			want:    false,
+		},
+		{
+			name:    "at all tag",
+			content: `<at user_id="all">all</at>`,
+			want:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := containsAtTag(tt.content); got != tt.want {
+				t.Errorf("containsAtTag() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateMessage_MentionFallback(t *testing.T) {
+	// Verify that containsAtTag correctly detects <at> tags in card JSON.
+	// json.Marshal escapes < to <, so we need to check for the escaped form too.
+
+	// Case 1: Content with <at> tag goes through buildCardJSON (which uses json.Marshal)
+	content := `<at user_id="ou_abc">Alice</at> please review`
+	cardJSON := buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)))
+	if !containsAtTag(cardJSON) {
+		t.Errorf("expected card JSON to contain <at> tag (escaped), got: %s", cardJSON)
+	}
+
+	// Case 2: Card JSON input from BuildRichCard (also uses json.Marshal)
+	richCardJSON := buildCardJSONWithStatusFooter(
+		sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)),
+		"footer",
+	)
+	if !containsAtTag(richCardJSON) {
+		t.Errorf("expected status footer card JSON to contain <at> tag (escaped), got: %s", richCardJSON)
+	}
+
+	// Case 3: Plain content without mentions should NOT trigger fallback
+	plainContent := "hello world"
+	plainCardJSON := buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(plainContent)))
+	if containsAtTag(plainCardJSON) {
+		t.Errorf("expected plain card JSON NOT to contain <at> tag, got: %s", plainCardJSON)
+	}
+
+	// Case 4: Raw <at> tag in non-JSON content (direct text)
+	if !containsAtTag(`<at user_id="ou_abc">Alice</at> hello`) {
+		t.Errorf("expected raw <at> tag to be detected")
+	}
+}
+
+func TestSendPreviewStart_MentionFallback(t *testing.T) {
+	// Verify that SendPreviewStart returns ErrNotSupported when the card JSON
+	// contains <at> tags (even in json.Marshal-escaped form).
+	// The check must happen BEFORE createCardEntity, so a nil client won't crash.
+	p := &Platform{
+		platformName:       "feishu_test",
+		useInteractiveCard: true,
+	}
+
+	rc := replyContext{chatID: "oc_test", messageID: "om_parent"}
+
+	// Card JSON produced by BuildRichCard with <at> tag inside.
+	// json.Marshal escapes < to < so the content contains the escaped form.
+	mentionContent := buildCardJSON(`<at user_id="ou_abc">Alice</at> hello`)
+	_, err := p.SendPreviewStart(context.Background(), rc, mentionContent)
+	if err != core.ErrNotSupported {
+		t.Errorf("SendPreviewStart with mention = %v, want ErrNotSupported", err)
+	}
+
+	// Plain content without mentions: the mention check passes, but the API call
+	// will fail. We only verify that ErrNotSupported is NOT returned — any other
+	// error (or panic) is expected since there's no real Lark client.
+	// This path is covered by TestContainsAtTag (no false positives on plain text).
+}
+
+func TestBuildReplyContent_MentionForcesPost(t *testing.T) {
+	// Verify that buildReplyContent forces MsgTypePost when content contains <at> tags,
+	// even when useInteractiveCard is true.
+	content := `<at user_id="ou_abc">Alice</at> please review`
+
+	msgType, _ := buildReplyContent(content, true)
+	if msgType != larkim.MsgTypePost {
+		t.Errorf("buildReplyContent with <at> tag and useInteractiveCard=true: msgType = %v, want MsgTypePost", msgType)
+	}
+
+	// Without <at> tags and with markdown, card should be used
+	plainContent := "hello **world**"
+	msgType2, _ := buildReplyContent(plainContent, true)
+	if msgType2 != larkim.MsgTypeInteractive {
+		t.Errorf("buildReplyContent without <at> tag: msgType = %v, want MsgTypeInteractive", msgType2)
+	}
+}
+
+func TestSendWithStatusFooter_PlainTextUsesPost(t *testing.T) {
+	// Verify the logic that SendWithStatusFooter uses: plain-text content + footer
+	// should produce a MsgTypePost with footer appended as italic, not an interactive card.
+	tests := []struct {
+		name      string
+		content   string
+		wantCard  bool // true = MsgTypeInteractive, false = MsgTypePost
+	}{
+		{
+			name:     "pure Chinese text",
+			content:  "设计文档已完成但尚未送审。按照工作流，",
+			wantCard: false,
+		},
+		{
+			name:     "simple English text",
+			content:  "Hello, the task is done.",
+			wantCard: false,
+		},
+		{
+			name:     "text with bold markdown",
+			content:  "The **result** is ready.",
+			wantCard: true,
+		},
+		{
+			name:     "text with code fence",
+			content:  "Here is the code:\n```go\nfmt.Println()\n```",
+			wantCard: true,
+		},
+		{
+			name:     "text with list",
+			content:  "Items:\n- First\n- Second",
+			wantCard: true,
+		},
+		{
+			name:     "text with inline code",
+			content:  "Use the `foo` command.",
+			wantCard: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hasMd := containsMarkdown(tt.content)
+			if hasMd != tt.wantCard {
+				t.Errorf("containsMarkdown(%q) = %v, want %v", tt.content, hasMd, tt.wantCard)
+			}
+			// When not using card, verify the combined content is valid Post JSON.
+			if !tt.wantCard {
+				footer := "Sonnet 4 · ctx 3% · ~/ws"
+				combined := tt.content + "\n\n*" + footer + "*"
+				body := buildPostMdJSON(combined)
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+					t.Fatalf("buildPostMdJSON produced invalid JSON: %v", err)
+				}
+				// Verify the content contains both the original text and the italic footer.
+				locale := parsed["zh_cn"].(map[string]any)
+				contentArr := locale["content"].([]any)
+				firstRow := contentArr[0].([]any)
+				mdEl := firstRow[0].(map[string]any)
+				text := mdEl["text"].(string)
+				if !strings.Contains(text, tt.content) {
+					t.Errorf("Post body missing original content, got %q", text)
+				}
+				if !strings.Contains(text, "*"+footer+"*") {
+					t.Errorf("Post body missing italic footer, got %q", text)
+				}
+			}
+		})
 	}
 }
