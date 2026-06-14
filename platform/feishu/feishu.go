@@ -142,6 +142,7 @@ type Platform struct {
 	cancel           context.CancelFunc
 	dedup            *core.MessageDedup
 	botOpenID        string
+	botName          string            // bot display name from API, used for name-based mention matching
 	peerBots         map[string]string // app_id -> friendly alias, for quoted-reply attribution
 	userNameCache    sync.Map          // open_id -> display name
 	chatNameCache    sync.Map          // chat_id -> chat name
@@ -353,6 +354,12 @@ func (p *Platform) getBotOpenID() string {
 	return p.botOpenID
 }
 
+func (p *Platform) getBotName() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.botName
+}
+
 func (p *Platform) KeepPreviewOnFinish() bool {
 	return p.useInteractiveCard
 }
@@ -362,20 +369,18 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	p.handler = handler
 	p.mu.Unlock()
 
-	// In webhook mode (private/self-hosted Feishu/Lark), startup must not depend
-	// on a successful bot-info API call. Older private deployments may not support
-	// the same auth/bootstrap flow as the public SDK path, but the webhook server
-	// can still receive events and operate correctly. We therefore only attempt
-	// bot open_id discovery eagerly for WebSocket mode.
-	if !p.shouldUseWebhookMode() {
-		if openID, err := p.fetchBotOpenID(); err != nil {
-			slog.Warn(p.platformName+": failed to get bot open_id, group chat filtering disabled", "error", err)
-		} else {
-			p.mu.Lock()
-			p.botOpenID = openID
-			p.mu.Unlock()
-			slog.Info(p.platformName+": bot identified", "open_id", openID)
-		}
+	// Discover bot identity (open_id + display name) for mention matching.
+	// Both WebSocket and webhook modes need this for correct group chat filtering
+	// and mention stripping. A failure is non-fatal: the bot continues running
+	// with degraded mention detection (only OpenID-based when available).
+	if openID, botName, err := p.fetchBotInfo(); err != nil {
+		slog.Warn(p.platformName+": failed to get bot info, mention matching may be incomplete", "error", err)
+	} else {
+		p.mu.Lock()
+		p.botOpenID = openID
+		p.botName = botName
+		p.mu.Unlock()
+		slog.Info(p.platformName+": bot identified", "open_id", openID, "name", botName)
 	}
 
 	// Register for shared WebSocket: multiple projects using the same app_id
@@ -983,7 +988,8 @@ func (p *Platform) onMessageRecalled(_ context.Context, event *larkim.P2MessageR
 	}
 
 	p.markMessageRecalled(messageID)
-	slog.Info(p.tag()+": message recalled",
+	slog.Info(
+		p.tag()+": message recalled",
 		"message_id", messageID,
 		"chat_id", chatID,
 		"recall_type", stringValue(event.Event.RecallType),
@@ -1051,7 +1057,8 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		chatType = *msg.ChatType
 	}
 	mentionCount := len(msg.Mentions)
-	slog.Debug(p.tag()+": inbound message",
+	slog.Debug(
+		p.tag()+": inbound message",
 		"message_id", messageID,
 		"chat_id", chatID,
 		"chat_type", chatType,
@@ -1062,13 +1069,65 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		"group_reply_all", p.groupReplyAll,
 		"thread_isolation", p.threadIsolation,
 	)
+	// DIAG: compare event content vs API-fetched content for interactive card messages
+	if msgType == "interactive" && msg.Content != nil {
+		eventContent := *msg.Content
+		slog.Info(
+			p.tag()+": DIAG interactive card event content",
+			"message_id", messageID,
+			"event_content_len", len(eventContent),
+			"event_content", eventContent,
+		)
+		// Fetch same message via REST API with raw_card_content
+		apiPath := fmt.Sprintf("/open-apis/im/v1/messages/%s?card_msg_content_type=raw_card_content", messageID)
+		if apiResp, err := p.client.Get(ctx, apiPath, nil, larkcore.AccessTokenTypeTenant); err == nil {
+			var resp struct {
+				Code int `json:"code"`
+				Data struct {
+					Items []struct {
+						Body struct {
+							Content string `json:"content"`
+						} `json:"body"`
+					} `json:"items"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(apiResp.RawBody, &resp); err == nil && resp.Code == 0 && len(resp.Data.Items) > 0 {
+				apiContent := resp.Data.Items[0].Body.Content
+				slog.Info(
+					p.tag()+": DIAG interactive card API content",
+					"message_id", messageID,
+					"api_content_len", len(apiContent),
+					"api_content", apiContent,
+				)
+				eventText := extractInteractiveCardText(eventContent)
+				apiText := extractInteractiveCardText(apiContent)
+				slog.Info(
+					p.tag()+": DIAG interactive card text comparison",
+					"message_id", messageID,
+					"event_text", eventText,
+					"api_text", apiText,
+					"match", eventText == apiText,
+				)
+			} else {
+				slog.Warn(p.tag()+": DIAG interactive card API fetch failed",
+					"message_id", messageID, "code", resp.Code, "items", len(resp.Data.Items), "error", err)
+			}
+		} else {
+			slog.Warn(p.tag()+": DIAG interactive card API call failed",
+				"message_id", messageID, "error", err)
+		}
+	}
 
 	// Pre-compute sessionKey so the @bot filter below can consult the active
 	// thread set; sessionKey is also used downstream for dispatch.
 	sessionKey := p.makeSessionKey(msg, chatID, userID)
 
-	if chatType == "group" && !p.groupReplyAll && p.getBotOpenID() != "" {
-		if !isBotMentioned(msg.Mentions, p.getBotOpenID()) {
+	if chatType == "group" && !p.groupReplyAll {
+		msgContent := ""
+		if msg.Content != nil {
+			msgContent = *msg.Content
+		}
+		if !isBotMentioned(msg.Mentions, p.getBotOpenID(), p.getBotName(), msgType, msgContent) {
 			switch {
 			// Feishu @all sends {"text":"@_all"} with 0 mentions.
 			case p.respondToAtEveryoneAndHere && msg.Content != nil && strings.Contains(*msg.Content, "@_all"):
@@ -1117,7 +1176,8 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	parentID := stringValue(msg.ParentId)
 
 	rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey}
-	slog.Debug(p.tag()+": routed inbound message",
+	slog.Debug(
+		p.tag()+": routed inbound message",
 		"message_id", messageID,
 		"session_key", sessionKey,
 		"reply_in_thread", p.shouldReplyInThread(rctx),
@@ -1180,9 +1240,10 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			slog.Error(p.tag()+": failed to parse text content", "error", err)
 			return
 		}
-		text := stripMentions(textBody.Text, mentions, p.getBotOpenID())
+		text := stripMentions(textBody.Text, mentions, p.getBotOpenID(), p.getBotName())
 		if text == "" && quoted.text == "" && len(quoted.images) == 0 {
-			slog.Debug(p.tag()+": dropping empty text after mention stripping",
+			slog.Debug(
+				p.tag()+": dropping empty text after mention stripping",
 				"message_id", messageID,
 				"raw_text_len", len(textBody.Text),
 				"mentions", len(mentions),
@@ -1256,7 +1317,7 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 
 	case "post":
 		textParts, images := p.parsePostContent(messageID, content)
-		text := stripMentions(strings.Join(textParts, "\n"), mentions, p.getBotOpenID())
+		text := stripMentions(strings.Join(textParts, "\n"), mentions, p.getBotOpenID(), p.getBotName())
 		if text == "" && len(images) == 0 && quoted.text == "" && len(quoted.images) == 0 {
 			return
 		}
@@ -1386,6 +1447,28 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			UserMessageTimeMs: createTimeMs,
 		})
 
+	case "interactive":
+		text := extractInteractiveCardText(content)
+		text = stripMentions(text, mentions, p.getBotOpenID(), p.getBotName())
+		if botName := p.getBotName(); botName != "" {
+			text = strings.ReplaceAll(text, "@"+botName, "")
+			text = strings.TrimSpace(text)
+		}
+		if text == "" && quoted.text == "" && len(quoted.images) == 0 {
+			slog.Debug(
+				p.tag()+": dropping empty interactive card after mention stripping",
+				"message_id", messageID,
+				"mentions", len(mentions),
+			)
+			return
+		}
+		p.dispatchCoreMessage(&core.Message{
+			SessionKey: sessionKey, Platform: p.platformName,
+			MessageID: messageID,
+			UserID:    userID, UserName: userName, ChatName: chatName,
+			Content: text, ExtraContent: quoted.text, ReplyCtx: rctx,
+			UserMessageTimeMs: createTimeMs,
+		})
 	default:
 		slog.Debug(p.tag()+": ignoring unsupported message type", "type", msgType)
 	}
@@ -1906,6 +1989,17 @@ func extractInteractiveCardText(content string) string {
 		return "[interactive card]"
 	}
 
+	// When Feishu sends card event content in legacy format, the real card JSON
+	// is inside a "user_dsl" field while the top-level "elements" only contain
+	// a fallback text like "请升级至最新版本客户端，以查看内容". Parse user_dsl
+	// as the actual card content instead.
+	if raw, ok := card["user_dsl"]; ok {
+		var dsl string
+		if json.Unmarshal(raw, &dsl) == nil && dsl != "" {
+			return extractInteractiveCardText(dsl)
+		}
+	}
+
 	var parts []string
 
 	// Schema 2.0: body may use property.elements (standard) or direct elements (simplified).
@@ -1959,11 +2053,28 @@ func extractInteractiveCardText(content string) string {
 		}
 		for _, raw := range elements {
 			var elem struct {
-				Tag  string `json:"tag"`
-				Text string `json:"text"`
+				Tag  string          `json:"tag"`
+				Text json.RawMessage `json:"text"`
 			}
-			if json.Unmarshal(raw, &elem) == nil && elem.Tag == "text" && strings.TrimSpace(elem.Text) != "" {
-				parts = append(parts, elem.Text)
+			if json.Unmarshal(raw, &elem) != nil {
+				continue
+			}
+			if len(elem.Text) == 0 {
+				continue
+			}
+			// text may be a plain string (tag:"text" elements) or
+			// an object like {"tag":"lark_md","content":"..."} (tag:"div" elements).
+			var textStr string
+			if json.Unmarshal(elem.Text, &textStr) == nil && strings.TrimSpace(textStr) != "" {
+				parts = append(parts, textStr)
+			} else {
+				var textObj struct {
+					Tag     string `json:"tag"`
+					Content string `json:"content"`
+				}
+				if json.Unmarshal(elem.Text, &textObj) == nil && strings.TrimSpace(textObj.Content) != "" {
+					parts = append(parts, textObj.Content)
+				}
 			}
 		}
 	}
@@ -2378,12 +2489,6 @@ func (p *Platform) SendWithStatusFooter(ctx context.Context, rctx any, content, 
 		return fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
 	}
 	content = p.resolveMentionsInContent(ctx, rc.chatID, content)
-	// Card <at> tags are visual-only and don't trigger mention events.
-	// Fall back to Post format so mentions work correctly.
-	if containsAtTag(content) {
-		slog.Info(p.tag() + ": status footer card contains mention, falling back to post format")
-		return p.Send(ctx, rctx, content)
-	}
 	// For plain-text content, append the footer as italic text via MsgTypePost.
 	// Post format renders Markdown (including italic) without the card chrome,
 	// giving a more natural chat appearance for simple messages.
@@ -3012,31 +3117,49 @@ func findSingleAsterisk(s string) int {
 	return -1
 }
 
-// fetchBotOpenID retrieves the bot's open_id via the Feishu bot info API.
-func (p *Platform) fetchBotOpenID() (string, error) {
+// fetchBotInfo retrieves the bot's open_id and display name via the Feishu bot info API.
+func (p *Platform) fetchBotInfo() (openID, botName string, err error) {
 	resp, err := p.client.Get(context.Background(),
 		"/open-apis/bot/v3/info", nil, larkcore.AccessTokenTypeTenant)
 	if err != nil {
-		return "", fmt.Errorf("api call: %w", err)
+		return "", "", fmt.Errorf("api call: %w", err)
 	}
 	var result struct {
 		Code int `json:"code"`
 		Bot  struct {
-			OpenID string `json:"open_id"`
+			OpenID  string `json:"open_id"`
+			AppName string `json:"app_name"`
 		} `json:"bot"`
 	}
 	if err := json.Unmarshal(resp.RawBody, &result); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+		return "", "", fmt.Errorf("parse response: %w", err)
 	}
 	if result.Code != 0 {
-		return "", fmt.Errorf("api code=%d", result.Code)
+		return "", "", fmt.Errorf("api code=%d", result.Code)
 	}
-	return result.Bot.OpenID, nil
+	return result.Bot.OpenID, result.Bot.AppName, nil
 }
 
-func isBotMentioned(mentions []*larkim.MentionEvent, botOpenID string) bool {
+func isBotMentioned(mentions []*larkim.MentionEvent, botOpenID, botName, msgType, content string) bool {
 	for _, m := range mentions {
-		if m.Id != nil && m.Id.OpenId != nil && *m.Id.OpenId == botOpenID {
+		if botOpenID != "" && m.Id != nil && m.Id.OpenId != nil && *m.Id.OpenId == botOpenID {
+			return true
+		}
+		if botName != "" && m.Name != nil && *m.Name == botName {
+			return true
+		}
+	}
+	// Interactive Card messages do not populate the mentions array even when
+	// <at> tags are present. Fall back to scanning card content for @BotName
+	// patterns or the bot's open_id in the raw JSON.
+	if msgType == "interactive" && content != "" {
+		if botName != "" {
+			text := extractInteractiveCardText(content)
+			if strings.Contains(text, "@"+botName) {
+				return true
+			}
+		}
+		if botOpenID != "" && strings.Contains(content, botOpenID) {
 			return true
 		}
 	}
@@ -3078,7 +3201,7 @@ func (p *Platform) isActiveThreadSession(sessionKey string) bool {
 // stripMentions processes @mention placeholders (e.g. @_user_1) in text.
 // The bot's own mention is removed; other user mentions are replaced with
 // their display name so the agent can see who was referenced.
-func stripMentions(text string, mentions []*larkim.MentionEvent, botOpenID string) string {
+func stripMentions(text string, mentions []*larkim.MentionEvent, botOpenID, botName string) string {
 	if len(mentions) == 0 {
 		return text
 	}
@@ -3086,7 +3209,9 @@ func stripMentions(text string, mentions []*larkim.MentionEvent, botOpenID strin
 		if m.Key == nil {
 			continue
 		}
-		if botOpenID != "" && m.Id != nil && m.Id.OpenId != nil && *m.Id.OpenId == botOpenID {
+		isBotMention := (botOpenID != "" && m.Id != nil && m.Id.OpenId != nil && *m.Id.OpenId == botOpenID) ||
+			(botName != "" && m.Name != nil && *m.Name == botName)
+		if isBotMention {
 			text = strings.ReplaceAll(text, *m.Key, "")
 		} else if m.Name != nil && *m.Name != "" {
 			text = strings.ReplaceAll(text, *m.Key, "@"+*m.Name)
@@ -3313,7 +3438,8 @@ func (p *Platform) withTransientRetry(ctx context.Context, operation string, fn 
 		lastErr = fn()
 		if lastErr == nil {
 			if attempt > 0 {
-				slog.Info(p.tag()+": transient retry succeeded",
+				slog.Info(
+					p.tag()+": transient retry succeeded",
 					"operation", operation,
 					"attempt", attempt+1,
 				)
@@ -3329,7 +3455,8 @@ func (p *Platform) withTransientRetry(ctx context.Context, operation string, fn 
 		// Add jitter: up to +25% of delay to spread out concurrent retries.
 		jitter := time.Duration(rand.Int64N(int64(delay / 4)))
 		actualDelay := delay + jitter
-		slog.Warn(p.tag()+": transient error, retrying",
+		slog.Warn(
+			p.tag()+": transient error, retrying",
 			"operation", operation,
 			"attempt", attempt+1,
 			"max_retries", maxTransientRetries,
@@ -3972,14 +4099,6 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 	var cardID string      // cardkit-v1 entity id (empty = no streaming text path)
 	if isCardJSON(content) {
 		cardJSON = content
-		// Card <at> tags are visual-only and don't trigger mention events.
-		// Check BEFORE createCardEntity to avoid wasting a card entity on content
-		// that will be discarded in favor of Post format anyway.
-		if containsAtTag(cardJSON) {
-			slog.Info(p.tag()+": preview card contains mention, skipping for post fallback",
-				"chat_id", chatID)
-			return nil, core.ErrNotSupported
-		}
 		// Try cardkit-v1 two-step flow regardless of Reply vs Create. Both
 		// Im.Message.Reply and Im.Message.Create accept the {type:card,data:{card_id}}
 		// content schema (verified by direct API call); skipping Reply mode would
@@ -3995,12 +4114,6 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 	} else {
 		cardJSON = buildPreviewCardJSON(content)
 		sendContent = cardJSON
-		// Card <at> tags are visual-only and don't trigger mention events.
-		if containsAtTag(sendContent) {
-			slog.Info(p.tag()+": preview card contains mention, skipping for post fallback",
-				"chat_id", chatID)
-			return nil, core.ErrNotSupported
-		}
 	}
 
 	var msgID string
@@ -4197,11 +4310,6 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 		}
 		cardJSON = buildCardJSON(sanitizeMarkdownURLs(processed))
 	}
-	// Card <at> tags are visual-only and don't trigger mention events.
-	// Fall back to Post format so mentions work correctly.
-	if containsAtTag(cardJSON) {
-		return p.mentionFallback(ctx, h, content)
-	}
 
 	// Route card-entity-bound messages to cardkit-v1 full-card update API.
 	// Im.Message.Patch on entity-referenced messages is silently no-op for the
@@ -4233,11 +4341,6 @@ func (p *Platform) UpdateMessageWithStatusFooter(ctx context.Context, previewHan
 	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
 	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
 	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
-	// Card <at> tags are visual-only and don't trigger mention events.
-	// Fall back to Post format so mentions work correctly.
-	if containsAtTag(cardJSON) {
-		return p.mentionFallback(ctx, h, content)
-	}
 	// Same card-entity routing as UpdateMessage above.
 	h.mu.Lock()
 	cardID := h.cardID
@@ -4372,25 +4475,6 @@ func (p *Platform) DeletePreviewMessage(ctx context.Context, previewHandle any) 
 	})
 }
 
-// mentionFallback handles the case where a card update would contain @mentions.
-// It deletes the existing streaming card and re-sends the content via Post
-// (rich text) so that <at> tags trigger mention events for bots.
-// The footer is discarded because Post format doesn't support it;
-// working mentions take priority over status footers.
-func (p *Platform) mentionFallback(ctx context.Context, h *feishuPreviewHandle, content string) error {
-	slog.Info(p.tag()+": card contains mention, falling back to post format",
-		"chat_id", h.chatID, "message_id", h.messageID)
-	// Delete the existing streaming card
-	if err := p.DeletePreviewMessage(ctx, h); err != nil {
-		slog.Warn(p.tag()+": failed to delete card before mention fallback", "error", err)
-	}
-	// Build a replyContext from the preview handle's stored info
-	rc := replyContext{chatID: h.chatID, messageID: h.messageID}
-	// Send via Post path — resolveMentionsInContent + buildReplyContent will
-	// detect <at> tags and use MsgTypePost automatically.
-	return p.Send(ctx, rc, content)
-}
-
 // SendAudio uploads audio bytes to Feishu and sends a voice message.
 // Implements core.AudioSender interface.
 // Feishu audio messages require opus format; non-opus input is converted via ffmpeg.
@@ -4512,7 +4596,11 @@ func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string,
 					textParts = append(textParts, elem.Text)
 				}
 			case "at":
-				if p.getBotOpenID() != "" && elem.UserId == p.getBotOpenID() {
+				botOpenID := p.getBotOpenID()
+				botName := p.getBotName()
+				isBotAt := (botOpenID != "" && elem.UserId == botOpenID) ||
+					(botName != "" && elem.UserName == botName)
+				if isBotAt {
 					continue
 				}
 				switch {
@@ -5948,7 +6036,8 @@ func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, mark
 		compactSteps := compactRichStepsForCardSize(steps, limit.perLane, limit.textLen)
 		compact, err := buildRichCardJSONBytes(status, compactSteps, markdown, streaming, statusFooter)
 		if err == nil && len(compact) <= maxRichCardJSONBytes {
-			slog.Debug("feishu: rich card exceeded size limit, compacted panels",
+			slog.Debug(
+				"feishu: rich card exceeded size limit, compacted panels",
 				"original_size", len(b),
 				"compacted_size", len(compact),
 				"steps", len(steps),

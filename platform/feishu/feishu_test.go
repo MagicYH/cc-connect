@@ -166,7 +166,8 @@ func TestDispatchMessageIncludesQuotedImage(t *testing.T) {
 				domain:       srv.URL,
 				appID:        appID,
 				appSecret:    appSecret,
-				client: lark.NewClient(appID, appSecret,
+				client: lark.NewClient(
+					appID, appSecret,
 					lark.WithOpenBaseUrl(srv.URL),
 					lark.WithHttpClient(srv.Client()),
 				),
@@ -265,7 +266,8 @@ func TestDispatchMessageKeepsMentionOnlyQuotedText(t *testing.T) {
 		appID:        appID,
 		appSecret:    appSecret,
 		botOpenID:    "ou_bot",
-		client: lark.NewClient(appID, appSecret,
+		client: lark.NewClient(
+			appID, appSecret,
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
 		),
@@ -345,7 +347,8 @@ func TestOnMessageRepliesToUnauthorizedMention(t *testing.T) {
 		allowFrom:    "ou_allowed",
 		botOpenID:    botOpenID,
 		dedup:        &core.MessageDedup{},
-		client: lark.NewClient(appID, appSecret,
+		client: lark.NewClient(
+			appID, appSecret,
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
 		),
@@ -428,11 +431,13 @@ func TestIsMessageRecalledDetectsWithdrawnMessageFromGetAPI(t *testing.T) {
 		domain:       srv.URL,
 		appID:        appID,
 		appSecret:    appSecret,
-		client: lark.NewClient(appID, appSecret,
+		client: lark.NewClient(
+			appID, appSecret,
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
 		),
-		replayClient: lark.NewClient(appID, appSecret,
+		replayClient: lark.NewClient(
+			appID, appSecret,
 			lark.WithEnableTokenCache(false),
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
@@ -492,11 +497,13 @@ func TestIsMessageRecalledDetectsDeletedMessageItem(t *testing.T) {
 		domain:       srv.URL,
 		appID:        appID,
 		appSecret:    appSecret,
-		client: lark.NewClient(appID, appSecret,
+		client: lark.NewClient(
+			appID, appSecret,
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
 		),
-		replayClient: lark.NewClient(appID, appSecret,
+		replayClient: lark.NewClient(
+			appID, appSecret,
 			lark.WithEnableTokenCache(false),
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
@@ -896,6 +903,7 @@ func TestStripMentions(t *testing.T) {
 		text      string
 		mentions  []*larkim.MentionEvent
 		botOpenID string
+		botName   string
 		expected  string
 	}{
 		{
@@ -903,15 +911,37 @@ func TestStripMentions(t *testing.T) {
 			text:      "hello",
 			mentions:  nil,
 			botOpenID: "",
+			botName:   "",
 			expected:  "hello",
 		},
 		{
-			name: "bot mention removed",
+			name: "bot mention removed by openID",
 			text: "@_user_1 /help",
 			mentions: []*larkim.MentionEvent{
 				{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("bot123")}, Name: strPtr("Bot")},
 			},
 			botOpenID: "bot123",
+			botName:   "",
+			expected:  "/help",
+		},
+		{
+			name: "bot mention removed by name match",
+			text: "@_user_1 /help",
+			mentions: []*larkim.MentionEvent{
+				{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("unknown")}, Name: strPtr("MyBot")},
+			},
+			botOpenID: "",
+			botName:   "MyBot",
+			expected:  "/help",
+		},
+		{
+			name: "bot mention removed by name when openID empty - slash command",
+			text: "@_user_1 /help",
+			mentions: []*larkim.MentionEvent{
+				{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("ou_xxx")}, Name: strPtr("Bot2")},
+			},
+			botOpenID: "",
+			botName:   "Bot2",
 			expected:  "/help",
 		},
 		{
@@ -921,6 +951,7 @@ func TestStripMentions(t *testing.T) {
 				{Key: strPtr("@_user_2"), Id: &larkim.UserId{OpenId: strPtr("user456")}, Name: strPtr("张三")},
 			},
 			botOpenID: "bot123",
+			botName:   "",
 			expected:  "assign to @张三",
 		},
 		{
@@ -931,6 +962,7 @@ func TestStripMentions(t *testing.T) {
 				{Key: strPtr("@_user_2"), Id: &larkim.UserId{OpenId: strPtr("user456")}, Name: strPtr("张三")},
 			},
 			botOpenID: "bot123",
+			botName:   "",
 			expected:  "assign to @张三",
 		},
 		{
@@ -940,6 +972,7 @@ func TestStripMentions(t *testing.T) {
 				{Key: nil, Id: &larkim.UserId{OpenId: strPtr("bot123")}},
 			},
 			botOpenID: "bot123",
+			botName:   "",
 			expected:  "@_user_1 hello",
 		},
 		{
@@ -949,6 +982,7 @@ func TestStripMentions(t *testing.T) {
 				{Key: strPtr("@_user_3"), Id: &larkim.UserId{OpenId: strPtr("user789")}, Name: nil},
 			},
 			botOpenID: "bot123",
+			botName:   "",
 			expected:  "text",
 		},
 		{
@@ -958,15 +992,228 @@ func TestStripMentions(t *testing.T) {
 				{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("someone")}},
 			},
 			botOpenID: "",
+			botName:   "",
 			expected:  "hello",
+		},
+		{
+			name: "name mismatch does not remove bot mention",
+			text: "@_user_1 hello",
+			mentions: []*larkim.MentionEvent{
+				{Key: strPtr("@_user_1"), Id: &larkim.UserId{OpenId: strPtr("other")}, Name: strPtr("OtherBot")},
+			},
+			botOpenID: "",
+			botName:   "MyBot",
+			expected:  "@OtherBot hello",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stripMentions(tt.text, tt.mentions, tt.botOpenID)
+			got := stripMentions(tt.text, tt.mentions, tt.botOpenID, tt.botName)
 			if got != tt.expected {
 				t.Errorf("stripMentions() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsBotMentioned(t *testing.T) {
+	tests := []struct {
+		name      string
+		mentions  []*larkim.MentionEvent
+		botOpenID string
+		botName   string
+		msgType   string
+		content   string
+		expected  bool
+	}{
+		{
+			name:      "no mentions",
+			mentions:  nil,
+			botOpenID: "bot123",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  false,
+		},
+		{
+			name: "matched by openID",
+			mentions: []*larkim.MentionEvent{
+				{Id: &larkim.UserId{OpenId: strPtr("bot123")}, Name: strPtr("MyBot")},
+			},
+			botOpenID: "bot123",
+			botName:   "",
+			msgType:   "text",
+			content:   "",
+			expected:  true,
+		},
+		{
+			name: "matched by name when openID empty",
+			mentions: []*larkim.MentionEvent{
+				{Id: &larkim.UserId{OpenId: strPtr("other")}, Name: strPtr("MyBot")},
+			},
+			botOpenID: "",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  true,
+		},
+		{
+			name: "matched by name when openID mismatched",
+			mentions: []*larkim.MentionEvent{
+				{Id: &larkim.UserId{OpenId: strPtr("wrong")}, Name: strPtr("MyBot")},
+			},
+			botOpenID: "bot123",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  true,
+		},
+		{
+			name: "name mismatch returns false",
+			mentions: []*larkim.MentionEvent{
+				{Id: &larkim.UserId{OpenId: strPtr("other")}, Name: strPtr("OtherBot")},
+			},
+			botOpenID: "",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  false,
+		},
+		{
+			name: "both openID and name match",
+			mentions: []*larkim.MentionEvent{
+				{Id: &larkim.UserId{OpenId: strPtr("bot123")}, Name: strPtr("MyBot")},
+			},
+			botOpenID: "bot123",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  true,
+		},
+		{
+			name: "nil fields handled safely",
+			mentions: []*larkim.MentionEvent{
+				{Id: nil, Name: nil},
+			},
+			botOpenID: "bot123",
+			botName:   "MyBot",
+			msgType:   "text",
+			content:   "",
+			expected:  false,
+		},
+		{
+			name:      "interactive card with @BotName in text",
+			mentions:  nil,
+			botOpenID: "ou_130f3942917d99c384b393ee3310a513",
+			botName:   "Reviewer",
+			msgType:   "interactive",
+			content:   `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"@Reviewer 请评审这份设计"}]}}`,
+			expected:  true,
+		},
+		{
+			name:      "interactive card with botOpenID in JSON",
+			mentions:  nil,
+			botOpenID: "ou_130f3942917d99c384b393ee3310a513",
+			botName:   "",
+			msgType:   "interactive",
+			content:   `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"<at id=ou_130f3942917d99c384b393ee3310a513></at> 请评审"}]}}`,
+			expected:  true,
+		},
+		{
+			name:      "interactive card without mention",
+			mentions:  nil,
+			botOpenID: "ou_130f3942917d99c384b393ee3310a513",
+			botName:   "Reviewer",
+			msgType:   "interactive",
+			content:   `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"这是普通通知消息"}]}}`,
+			expected:  false,
+		},
+		{
+			name:      "interactive card with wrong bot name",
+			mentions:  nil,
+			botOpenID: "ou_130f3942917d99c384b393ee3310a513",
+			botName:   "Reviewer",
+			msgType:   "interactive",
+			content:   `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"@Developer 请开发"}]}}`,
+			expected:  false,
+		},
+		{
+			name:      "interactive card with empty botName and no openID match",
+			mentions:  nil,
+			botOpenID: "ou_other",
+			botName:   "",
+			msgType:   "interactive",
+			content:   `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"@Reviewer 请评审"}]}}`,
+			expected:  false,
+		},
+		{
+			name:      "text message does not trigger content scanning even with @BotName",
+			mentions:  nil,
+			botOpenID: "",
+			botName:   "Reviewer",
+			msgType:   "text",
+			content:   `{"text":"@Reviewer 请评审"}`,
+			expected:  false,
+		},
+		{
+			name:      "interactive card with legacy format",
+			mentions:  nil,
+			botOpenID: "ou_130f3942917d99c384b393ee3310a513",
+			botName:   "Reviewer",
+			msgType:   "interactive",
+			content:   `{"config":{"wide_screen_mode":true},"elements":[{"tag":"div","text":{"tag":"lark_md","content":"@Reviewer 请评审"}}]}`,
+			expected:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isBotMentioned(tt.mentions, tt.botOpenID, tt.botName, tt.msgType, tt.content)
+			if got != tt.expected {
+				t.Errorf("isBotMentioned() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractInteractiveCardText(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "schema_2.0_body_property_elements",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"plain_text","property":{"content":"Hello world"}}]}},"schema":"2.0"}`,
+			want:    "Hello world",
+		},
+		{
+			name:    "legacy_div_with_lark_md",
+			content: `{"elements":[[{"tag":"div","text":{"tag":"lark_md","content":"@BotName hello"}}]]}`,
+			want:    "@BotName hello",
+		},
+		{
+			name:    "user_dsl_with_schema_2.0_card",
+			content: `{"title":null,"elements":[[{"tag":"img","image_key":"img_v3_02ad"},{"tag":"text","text":"请升级至最新版本客户端，以查看内容"}]],"user_dsl":"{\"body\":{\"elements\":[{\"content\":\"<at id=ou_abc mention_key=@_user_1></at>\\nHello world\",\"tag\":\"markdown\"}]},\"config\":{},\"schema\":\"2.0\"}"}`,
+			want:    "<at id=ou_abc mention_key=@_user_1></at>\nHello world",
+		},
+		{
+			name:    "user_dsl_with_legacy_elements",
+			content: `{"elements":[[{"tag":"text","text":"请升级至最新版本客户端，以查看内容"}]],"user_dsl":"{\"elements\":[[{\"tag\":\"div\",\"text\":{\"tag\":\"lark_md\",\"content\":\"Real content\"}}]]}"}`,
+			want:    "Real content",
+		},
+		{
+			name:    "empty_card",
+			content: `{"elements":[]}`,
+			want:    "[interactive card]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractInteractiveCardText(tt.content)
+			if got != tt.want {
+				t.Errorf("extractInteractiveCardText() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1110,7 +1357,8 @@ func TestOnMessageThreadIsolationAdmitsAttachmentWithoutMention(t *testing.T) {
 		botOpenID:       botOpenID,
 		threadIsolation: true,
 		dedup:           &core.MessageDedup{},
-		client: lark.NewClient(appID, appSecret,
+		client: lark.NewClient(
+			appID, appSecret,
 			lark.WithOpenBaseUrl(srv.URL),
 			lark.WithHttpClient(srv.Client()),
 		),
