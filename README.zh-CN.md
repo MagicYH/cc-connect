@@ -180,16 +180,21 @@ MiniMax M3 突破 Coding 与 Agentic AI 前沿，基于 MiniMax Sparse Attention
 </p>
 
 
-## 🆕 v1.3.0 更新了什么
+## 🆕 v1.3.3 更新了什么
 
-- **🌐 Web 管理后台（推荐）** — 内置全功能可视化管理界面，**无需额外依赖**。支持项目增删改查、服务商管理、会话监控、定时任务编辑，还可以**直接在浏览器里和 Agent 对话**。支持 5 种语言 (en/zh/zh-TW/ja/es)。建议通过 Web UI 管理 cc-connect，无需手动编辑 `config.toml`。运行 `cc-connect web` 配置并打开管理后台，然后运行 `cc-connect` 启动服务。
-- **生命周期事件钩子** — 新增 `[[hooks]]` 配置，支持在消息收发、会话开始/结束、定时任务触发、权限请求、错误等事件时触发 Shell 命令或 HTTP Webhook。默认异步，失败不阻塞。
-- **技能管理** — 新增 `/skills` 页面，支持本地技能浏览和推荐预设。
-- **全局服务商管理** — 在 Web UI 中添加/编辑/删除 Provider，支持从 cc-switch 配置导入。
-- **个人微信** — 用 **微信个人号（ilink 长轮询）** 和本地 Agent 对话；支持扫码 `weixin setup`、CDN 收发图片/文件，**无需公网 IP**。*[接入说明 → `docs/weixin.md`](docs/weixin.md)*
-- **微博私信** — 通过 **微博私信** 与 Agent 对话，WebSocket 连接，无需公网 IP，支持流式文本回复。
-- **飞书增强** — 自动解析 `@成员` 提及、多级回复链识别、完成 Emoji 反应。
-- **新增 Agent** — 支持 Kimi CLI 和 Pi agent。
+1.3.3 系列首个正式版 —— 把 beta.1 → beta.5（自 v1.3.2 起约 235 个 PR）与 7 个 post-beta 修复一并稳定下来。亮点：
+
+- **新增 Agent** — Devin CLI、Google Antigravity (`agy`)、GitHub Copilot CLI 均为一等公民 agent (#672, #1123, #865)；Cursor / OpenCode / Qoder / Kimi / Pi 覆盖大幅加强。
+- **平台能力扩展** — QQ (OneBot) 文件收发 (#323)、QQ Bot 内联键盘 (#1131)、企业微信 WebSocket `SendFile` (#1199)、飞书原生音视频附件 (#1202)、Slack Assistant API (#844)、MAX webhook 投递模式 (#818)、钉钉 @mention / richText / 图片 / 文件入站 (#1188, #828, #1357)、微博私信能力扩充、WPS 协作（金山协作）。
+- **长任务保护** — 新增 `max_turn_time_mins` 绝对墙钟上限，软停 + 强杀 + 下一条消息自动 `--resume`，避免长跑的 bash / test 命令把 session 永久锁住 (#1091)。
+- **新核心命令** — `/timer`（一次性延时任务）、`/cancel`（中断当前 turn）、`/ps`（替代 `/btw`，`/btw` 保留为别名）、`cron add --silent`、agent 主动 TTS 输出。
+- **多用户 / 权限** — 可选「回复未授权 IM 发件人」、`@Bot/permit` ≡ `/permit` 关键字匹配、Bridge 启用时必须配置 token。
+- **Provider 生态** — 新增 NekoCode、VisionCoder、AIHubMix、MiniMax M3 预设；Claude Code 1M-context Opus + `append_system_prompt` + PermissionRequest hooks；Codex `request_user_input` app-server 事件；可配置 `shell` 与 shell profile。
+- **可观测性** — Blackbox 测试框架（P0/P1/P2 + config-switch 矩阵）、CUJ 测试框架、codex/opencode/kimi 的 provider-resume 回归套件、Pi 在 reply footer 输出 context 用量。
+
+⚠️ **行为变更（可能需要改配置）**：Telegram / Discord `progress_style` 默认值改为 `compact`（设回 `legacy` 可还原）；QQ Bot 默认 `intents` 现在包含 `INTERACTION_CREATE`，若自定义 `intents` 需手动包含 `1<<26`；钉钉 `msgtype=file` 入站现在送达 agent；引擎权限关键字容忍 @mention；`reset_on_idle_mins` 默认值改为 30 分钟；Bridge 未配置 token 时拒绝启动。完整主题汇总见 `changelogs/v1.3.3.md`。
+
+无任何破坏性变更（No breaking changes）。从任意 v1.3.3-beta.\* 升级到 v1.3.3 是 fix-only 的小升级。
 
 
 ## 🧩 平台能力一览
@@ -206,15 +211,15 @@ MiniMax M3 突破 Coding 与 Agentic AI 前沿，基于 MiniMax Sparse Attention
 
 † **QQ（NapCat / OneBot）** — 非官方自建桥接，体验依赖你的 NapCat 与网络环境。
 
-| 能力 | 飞书 | WPS 协作 | 钉钉 | Telegram | Slack | Discord | LINE | 企业微信 | 微博 | **微信个人号**<br>（ilink） | QQ† | QQ 官方机器人 |
-|------|:----:|:--------:|:----:|:--------:|:-----:|:-------:|:----:|:--------:|:----:|:--------------------------:|:---:|:------------:|
-| 文本与斜杠命令 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Markdown / 卡片 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ✅ | ✅ | ✅ |
-| 流式 / 分片回复 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 图片与文件 | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ | ✅ |
-| 语音 / STT / TTS | ⚠️ | ❌ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ | ⚠️ | ⚠️ |
-| 私聊 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 群聊 / 频道 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| 能力 | 飞书 | WPS 协作 | 钉钉 | Telegram | Slack | Discord | LINE | 企业微信 | 微博 | **微信个人号**<br>（ilink） | QQ† | QQ 官方机器人 | Matrix |
+|------|:----:|:--------:|:----:|:--------:|:-----:|:-------:|:----:|:--------:|:----:|:--------------------------:|:---:|:------------:|:-----:|
+| 文本与斜杠命令 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Markdown / 卡片 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ✅ | ✅ | ✅ | ⚠️ |
+| 流式 / 分片回复 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 图片与文件 | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| 语音 / STT / TTS | ⚠️ | ❌ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
+| 私聊 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 群聊 / 频道 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 
 > **企业微信：** Webhook 模式需要**公网 URL**；长连接等模式多数**不需要**。  
 > **语音行：** 多数平台要在 `config.toml` 里配置 `[speech]` / TTS 等，表中为经验性归纳。  
@@ -227,7 +232,7 @@ MiniMax M3 突破 Coding 与 Agentic AI 前沿，基于 MiniMax Sparse Attention
 **10+ 大 AI Agent** — Claude Code、Codex、Cursor Agent、Kimi CLI、Qoder CLI、Gemini CLI、OpenCode、iFlow CLI、Pi、Devin、Copilot，还可通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-started/agents) 接入更多 Agent。按需选用，或同时使用全部。
 
 ### 📱 平台灵活性
-**12 大聊天平台** — 飞书、WPS 协作、钉钉、Slack、Telegram、Discord、企业微信、微博、LINE、QQ、QQ 官方机器人，以及 **微信个人号（ilink）**。大部分平台**无需公网 IP**。
+**13 大聊天平台** — 飞书、WPS 协作、钉钉、Slack、Telegram、Discord、企业微信、微博、LINE、QQ、QQ 官方机器人、Matrix，以及 **微信个人号（ilink）**。大部分平台**无需公网 IP**。
 
 ### 🔄 多 Agent 编排
 **多机器人中继** — 在群聊中绑定多个机器人，让它们相互协作。问 Claude，再听 Gemini 的见解 — 同一个对话搞定。
@@ -375,6 +380,7 @@ cc-connect update --pre     # 含预发布版本
 | Platform | 微信个人号（ilink） | ✅— HTTP 长轮询 — 无需公网 IP |
 | Platform | QQ (NapCat/OneBot) | ✅ WebSocket |
 | Platform | QQ 官方机器人 | ✅ WebSocket — 无需公网 IP |
+| Platform | Matrix | ✅ Long Polling (/sync) — 无需公网 IP |
 
 
 ## 📖 平台接入指南
@@ -391,6 +397,7 @@ cc-connect update --pre     # 含预发布版本
 | 企业微信 | [docs/wecom.md](docs/wecom.md) | WebSocket / Webhook | 不需要 (WS) / 需要 (Webhook) |
 | 微信个人号（ilink） | [docs/weixin.md](docs/weixin.md) | HTTP 长轮询（ilink） | 不需要 |
 | QQ / QQ 机器人 | [docs/qq.md](docs/qq.md) | WebSocket | 不需要 |
+| Matrix | [docs/matrix.md](docs/matrix.md) | /sync（长轮询） | 不需要 |
 
 
 ## 🎯 核心功能

@@ -51,12 +51,22 @@ type Agent struct {
 	routerURL        string // Claude Code Router URL (e.g., "http://127.0.0.1:3456")
 	routerAPIKey     string // Claude Code Router API key (optional)
 	systemPrompt     string // Custom system prompt to pass to Claude CLI
+	pluginDirs       []string // Plugin directories to load via --plugin-dir (repeatable)
 
 	appendSystemPrompt string // Custom text appended to the system prompt (keeps Claude's default)
 
 	providerProxy  *core.ProviderProxy // local proxy for third-party providers
 	proxyLocalURL  string              // local URL of the proxy
 	platformPrompt string              // platform-specific formatting instructions
+
+	// ccDataDir is injected by the cc-connect host (see buildAgentOptions
+	// in cmd/cc-connect/main.go). It locates the global directory where
+	// we write the shared cc-connect system prompt file (issue #1376
+	// workaround for Windows 8192-byte cmdline limit). The file at
+	// <ccDataDir>/agent-prompts/cc-connect-system.md is written once per
+	// startup and shared across all sessions that don't need per-spawn
+	// customisation. Empty value falls back to os.TempDir.
+	ccDataDir string
 
 	// spawnOpts controls OS-user isolation via run_as_user. Zero value
 	// means legacy spawn as the supervisor user. See core/runas.go.
@@ -137,6 +147,18 @@ func New(opts map[string]any) (core.Agent, error) {
 	mode = normalizePermissionMode(mode)
 	systemPrompt, _ := opts["system_prompt"].(string)
 	appendSystemPrompt, _ := opts["append_system_prompt"].(string)
+	ccDataDir, _ := opts["cc_data_dir"].(string)
+
+	var pluginDirs []string
+	if dir, ok := opts["plugin_dir"].(string); ok && dir != "" {
+		pluginDirs = []string{dir}
+	} else if dirs, ok := opts["plugin_dir"].([]any); ok {
+		for _, d := range dirs {
+			if s, ok := d.(string); ok && s != "" {
+				pluginDirs = append(pluginDirs, s)
+			}
+		}
+	}
 
 	var allowedTools []string
 	if tools, ok := opts["allowed_tools"].([]any); ok {
@@ -214,6 +236,16 @@ func New(opts map[string]any) (core.Agent, error) {
 		}
 	}
 
+	// Eagerly materialise the shared cc-connect-system.md at startup so
+	// the file exists on disk before the first spawn. claude reads it
+	// via --append-system-prompt-file; the lazy fallback in
+	// newClaudeSession still covers content drift (cc-connect upgrades)
+	// and the empty-ccDataDir corner case. Failure here is non-fatal —
+	// the next spawn will retry and surface the error then.
+	if _, err := ensureSharedSystemPromptFile(ccDataDir, core.AgentSystemPrompt()); err != nil {
+		slog.Warn("claudecode: failed to write shared system prompt file at startup; will retry on first spawn", "err", err, "cc_data_dir", ccDataDir)
+	}
+
 	return &Agent{
 		workDir:          workDir,
 		cliBin:           cliBin,
@@ -223,6 +255,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		reasoningEffort:  normalizeEffort(reasoningEffort),
 		mode:             mode,
 		systemPrompt:     systemPrompt,
+		pluginDirs:       pluginDirs,
 		allowedTools:     allowedTools,
 		disallowedTools:  disallowedTools,
 		maxContextTokens: maxContextTokens,
@@ -231,6 +264,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		routerURL:        routerURL,
 		routerAPIKey:     routerAPIKey,
 		spawnOpts:        spawnOpts,
+		ccDataDir:        ccDataDir,
 
 		appendSystemPrompt: appendSystemPrompt,
 	}, nil
@@ -467,6 +501,8 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	effort := a.reasoningEffort
 	workDir := a.workDir
 	mode := a.mode
+	pluginDirs := make([]string, len(a.pluginDirs))
+	copy(pluginDirs, a.pluginDirs)
 	extraEnv := a.runtimeEnvLocked()
 
 	activeIdx := a.activeIdx
@@ -491,7 +527,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	disableVerbose := a.routerURL != ""
 	a.mu.Unlock()
 
-	return newClaudeSession(ctx, workDir, a.cliBin, a.cliExtraArgs, a.cliArgsFlag, model, effort, sessionID, mode, systemPrompt, appendSystemPrompt, tools, disTools, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok)
+	return newClaudeSession(ctx, workDir, a.cliBin, a.cliExtraArgs, a.cliArgsFlag, model, effort, sessionID, mode, systemPrompt, appendSystemPrompt, tools, disTools, pluginDirs, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok, a.ccDataDir)
 }
 
 func (a *Agent) ListSessions(ctx context.Context) ([]core.AgentSessionInfo, error) {
@@ -832,6 +868,9 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	}
 	if a.routerAPIKey != "" {
 		opts["router_api_key"] = a.routerAPIKey
+	}
+	if len(a.pluginDirs) > 0 {
+		opts["plugin_dir"] = stringsToAny(a.pluginDirs)
 	}
 	return opts
 }
