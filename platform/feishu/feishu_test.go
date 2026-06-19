@@ -1208,6 +1208,26 @@ func TestExtractInteractiveCardText(t *testing.T) {
 			content: `{"elements":[]}`,
 			want:    "[interactive card]",
 		},
+		{
+			name:    "legacy_column_set",
+			content: `{"elements":[[{"tag":"column_set","columns":[{"tag":"column","elements":[{"tag":"markdown","content":"**PSM:**"}]},{"tag":"column","elements":[{"tag":"div","text":{"tag":"lark_md","content":"my.service.psm"}}]}]}]]}`,
+			want:    "**PSM:**\nmy.service.psm",
+		},
+		{
+			name:    "legacy_div_with_fields",
+			content: `{"elements":[[{"tag":"div","text":{"tag":"lark_md","content":"Header text"},"fields":[{"is_short":true,"text":{"tag":"lark_md","content":"**PSM:** svc.psm"}},{"is_short":true,"text":"Plain string field"}]}]]}`,
+			want:    "Header text\n**PSM:** svc.psm\nPlain string field",
+		},
+		{
+			name:    "legacy_note",
+			content: `{"elements":[[{"tag":"note","elements":[{"tag":"plain_text","content":"Updated 3 minutes ago"}]}]]}`,
+			want:    "Updated 3 minutes ago",
+		},
+		{
+			name:    "legacy_action_with_button_and_select",
+			content: `{"elements":[[{"tag":"action","actions":[{"tag":"button","text":{"tag":"plain_text","content":"Acknowledge"}},{"tag":"select_static","placeholder":{"tag":"plain_text","content":"Select cluster"}}]}]]}`,
+			want:    "Acknowledge\nSelect cluster",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

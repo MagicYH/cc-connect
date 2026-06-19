@@ -1994,6 +1994,162 @@ func extractPostPlainText(content string) string {
 	return strings.Join(parts, "\n")
 }
 
+const maxExtractDepth = 10
+
+// extractLegacyElementText extracts text from a single legacy-format card element.
+// It handles div (with text and fields), text/markdown/lark_md, column_set, note,
+// action, img, hr, and falls back to extracting text/content fields for unknown tags.
+func extractLegacyElementText(raw json.RawMessage, depth int) string {
+	if depth > maxExtractDepth {
+		return "[...]"
+	}
+	var elem map[string]json.RawMessage
+	if json.Unmarshal(raw, &elem) != nil {
+		return ""
+	}
+
+	var tag string
+	if raw, ok := elem["tag"]; ok {
+		_ = json.Unmarshal(raw, &tag)
+	}
+
+	var parts []string
+
+	switch tag {
+	case "div":
+		// Extract text (plain string or {tag, content} object)
+		if raw, ok := elem["text"]; ok {
+			parts = append(parts, extractTextValue(raw)...)
+		}
+		// Extract fields[].text
+		if raw, ok := elem["fields"]; ok {
+			var fields []struct {
+				Text json.RawMessage `json:"text"`
+			}
+			if json.Unmarshal(raw, &fields) == nil {
+				for _, f := range fields {
+					parts = append(parts, extractTextValue(f.Text)...)
+				}
+			}
+		}
+	case "markdown", "lark_md":
+		if raw, ok := elem["content"]; ok {
+			var s string
+			if json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != "" {
+				parts = append(parts, s)
+			}
+		}
+	case "text":
+		// text can be a plain string in the "text" field
+		if raw, ok := elem["text"]; ok {
+			parts = append(parts, extractTextValue(raw)...)
+		}
+	case "column_set":
+		if raw, ok := elem["columns"]; ok {
+			var columns []struct {
+				Elements json.RawMessage `json:"elements"`
+			}
+			if json.Unmarshal(raw, &columns) == nil {
+				for _, col := range columns {
+					for _, el := range flattenElements(col.Elements) {
+						if s := extractLegacyElementText(el, depth+1); s != "" {
+							parts = append(parts, s)
+						}
+					}
+				}
+			}
+		}
+	case "note":
+		if raw, ok := elem["elements"]; ok {
+			for _, el := range flattenElements(raw) {
+				if s := extractLegacyElementText(el, depth+1); s != "" {
+					parts = append(parts, s)
+				}
+			}
+		}
+	case "action":
+		if raw, ok := elem["actions"]; ok {
+			var actions []struct {
+				Text        json.RawMessage `json:"text"`
+				Placeholder json.RawMessage `json:"placeholder"`
+			}
+			if json.Unmarshal(raw, &actions) == nil {
+				for _, a := range actions {
+					parts = append(parts, extractTextValue(a.Text)...)
+					if len(a.Placeholder) > 0 {
+						parts = append(parts, extractTextValue(a.Placeholder)...)
+					}
+				}
+			}
+		}
+	case "img":
+		if raw, ok := elem["alt"]; ok {
+			parts = append(parts, extractTextValue(raw)...)
+		}
+		if raw, ok := elem["title"]; ok && len(parts) == 0 {
+			var s string
+			if json.Unmarshal(raw, &s) == nil && s != "" {
+				parts = append(parts, s)
+			}
+		}
+	case "hr":
+		parts = append(parts, "---")
+	default:
+		// Fallback: try text, then content
+		if raw, ok := elem["text"]; ok {
+			parts = append(parts, extractTextValue(raw)...)
+		}
+		if raw, ok := elem["content"]; ok && len(parts) == 0 {
+			var s string
+			if json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// extractTextValue extracts text from a value that may be a plain string
+// or a {tag, content} object (like {"tag":"lark_md","content":"..."}).
+func extractTextValue(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != "" {
+		return []string{s}
+	}
+	var obj struct {
+		Content string `json:"content"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && strings.TrimSpace(obj.Content) != "" {
+		return []string{obj.Content}
+	}
+	return nil
+}
+
+// flattenElements parses an elements array that may be a flat array
+// or an array-of-arrays (legacy nested format) and returns a flat slice.
+func flattenElements(raw json.RawMessage) []json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var nested [][]json.RawMessage
+	if json.Unmarshal(raw, &nested) == nil && len(nested) > 0 {
+		var flat []json.RawMessage
+		for _, row := range nested {
+			flat = append(flat, row...)
+		}
+		return flat
+	}
+	var flat []json.RawMessage
+	if json.Unmarshal(raw, &flat) == nil {
+		return flat
+	}
+	return nil
+}
+
 // extractInteractiveCardText extracts readable text from a Feishu interactive card JSON.
 // With raw_card_content, the response wraps the card in {"json_card": "...", ...}.
 // Supports schema 2.0 (body.property.elements with recursive nesting) and
@@ -2076,29 +2232,8 @@ func extractInteractiveCardText(content string) string {
 			}
 		}
 		for _, raw := range elements {
-			var elem struct {
-				Tag  string          `json:"tag"`
-				Text json.RawMessage `json:"text"`
-			}
-			if json.Unmarshal(raw, &elem) != nil {
-				continue
-			}
-			if len(elem.Text) == 0 {
-				continue
-			}
-			// text may be a plain string (tag:"text" elements) or
-			// an object like {"tag":"lark_md","content":"..."} (tag:"div" elements).
-			var textStr string
-			if json.Unmarshal(elem.Text, &textStr) == nil && strings.TrimSpace(textStr) != "" {
-				parts = append(parts, textStr)
-			} else {
-				var textObj struct {
-					Tag     string `json:"tag"`
-					Content string `json:"content"`
-				}
-				if json.Unmarshal(elem.Text, &textObj) == nil && strings.TrimSpace(textObj.Content) != "" {
-					parts = append(parts, textObj.Content)
-				}
+			if s := extractLegacyElementText(raw, 0); s != "" {
+				parts = append(parts, s)
 			}
 		}
 	}
