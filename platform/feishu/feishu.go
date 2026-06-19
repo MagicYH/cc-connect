@@ -2193,9 +2193,9 @@ func extractInteractiveCardText(content string) string {
 		}
 		if json.Unmarshal(raw, &body) == nil {
 			if body.Tag == "body" && len(body.Property.Elements) > 0 {
-				extractCardElements(body.Property.Elements, &parts)
+				extractCardElements(body.Property.Elements, &parts, 0)
 			} else if len(body.Elements) > 0 {
-				extractCardElements(body.Elements, &parts)
+				extractCardElements(body.Elements, &parts, 0)
 			}
 		}
 	}
@@ -2247,7 +2247,15 @@ func extractInteractiveCardText(content string) string {
 // extractCardElements recursively extracts text from schema 2.0 card elements.
 // Handles: property.content, property.text (nested element), property.elements (recursive),
 // code_span, code_block (with tokenized contents), text_tag, hr, button (with open_url), etc.
-func extractCardElements(elements []json.RawMessage, parts *[]string) {
+func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...int) {
+	d := 0
+	if len(depth) > 0 {
+		d = depth[0]
+	}
+	if d > maxExtractDepth {
+		*parts = append(*parts, "[...]")
+		return
+	}
 	for _, raw := range elements {
 		var elem struct {
 			Tag      string            `json:"tag"`
@@ -2338,16 +2346,16 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 		case "hr":
 			*parts = append(*parts, "---")
 		case "table":
-			extractCardTable(elem.Property.Columns, elem.Property.Rows, parts)
+			extractCardTable(elem.Property.Columns, elem.Property.Rows, parts, d+1)
 		case "list":
-			extractCardListItems(elem.Property.Items, parts)
+			extractCardListItems(elem.Property.Items, parts, d+1)
 		case "column_set":
 			var columns []struct {
 				Elements []json.RawMessage `json:"elements"`
 			}
 			if json.Unmarshal(elem.Property.Columns, &columns) == nil {
 				for _, col := range columns {
-					extractCardElements(col.Elements, parts)
+					extractCardElements(col.Elements, parts, d+1)
 				}
 			}
 		case "note":
@@ -2356,7 +2364,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 				noteElements = elem.Property.Elements
 			}
 			if len(noteElements) > 0 {
-				extractCardElements(noteElements, parts)
+				extractCardElements(noteElements, parts, d+1)
 			}
 		case "action":
 			var actions []struct {
@@ -2384,7 +2392,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 				}
 			}
 			if len(elem.Property.Elements) > 0 {
-				extractCardElements(elem.Property.Elements, parts)
+				extractCardElements(elem.Property.Elements, parts, d+1)
 			}
 			continue
 		default:
@@ -2411,7 +2419,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 			}
 		}
 		if len(elem.Property.Elements) > 0 {
-			extractCardElements(elem.Property.Elements, parts)
+			extractCardElements(elem.Property.Elements, parts, d+1)
 		}
 	}
 }
@@ -2420,7 +2428,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 // Table structure: property.columns defines column names/headers,
 // property.rows is an array of row objects where each key is the column name
 // and the value has a "data" field containing a markdown/plain_text element.
-func extractCardTable(columnsRaw, rowsRaw json.RawMessage, parts *[]string) {
+func extractCardTable(columnsRaw, rowsRaw json.RawMessage, parts *[]string, depth int) {
 	var columns []struct {
 		DisplayName string `json:"displayName"`
 		Name        string `json:"name"`
@@ -2452,7 +2460,7 @@ func extractCardTable(columnsRaw, rowsRaw json.RawMessage, parts *[]string) {
 		for i, col := range columns {
 			cell := row[col.Name]
 			var cellParts []string
-			extractCardElements([]json.RawMessage{cell.Data}, &cellParts)
+			extractCardElements([]json.RawMessage{cell.Data}, &cellParts, depth+1)
 			cells[i] = strings.Join(cellParts, " ")
 		}
 		*parts = append(*parts, "| "+strings.Join(cells, " | ")+" |")
@@ -2461,7 +2469,7 @@ func extractCardTable(columnsRaw, rowsRaw json.RawMessage, parts *[]string) {
 
 // extractCardListItems extracts text from a Feishu card list element.
 // List structure: property.items is an array of items, each with an "elements" array.
-func extractCardListItems(itemsRaw json.RawMessage, parts *[]string) {
+func extractCardListItems(itemsRaw json.RawMessage, parts *[]string, depth int) {
 	var items []struct {
 		Elements []json.RawMessage `json:"elements"`
 	}
@@ -2470,7 +2478,7 @@ func extractCardListItems(itemsRaw json.RawMessage, parts *[]string) {
 	}
 	for _, item := range items {
 		var itemParts []string
-		extractCardElements(item.Elements, &itemParts)
+		extractCardElements(item.Elements, &itemParts, depth+1)
 		if len(itemParts) > 0 {
 			*parts = append(*parts, "- "+strings.Join(itemParts, " "))
 		}

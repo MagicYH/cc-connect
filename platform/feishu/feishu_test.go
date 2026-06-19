@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1177,6 +1178,17 @@ func TestIsBotMentioned(t *testing.T) {
 	}
 }
 
+func buildDeeplyNestedCard(depth int) string {
+	inner := `{"tag":"markdown","content":"Level ` + strconv.Itoa(depth-1) + `"}`
+	for i := depth - 2; i >= 0; i-- {
+		inner = fmt.Sprintf(
+			`{"tag":"column_set","columns":[{"tag":"column","elements":[{"tag":"markdown","content":"Level %d"},{"tag":"column_set","columns":[{"tag":"column","elements":[%s]}]}]}]}`,
+			i, inner,
+		)
+	}
+	return `{"elements":[[` + inner + `]]}`
+}
+
 func TestExtractInteractiveCardText(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1253,10 +1265,29 @@ func TestExtractInteractiveCardText(t *testing.T) {
 			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"div","property":{"text":{"tag":"lark_md","content":"Header"},"fields":[{"text":{"tag":"lark_md","content":"**PSM:** svc.psm"}},{"text":"Plain string field"}]}}]}},"schema":"2.0"}`,
 			want:    "Header\n**PSM:** svc.psm\nPlain string field",
 		},
+		{
+			name:    "user_dsl_alarm_card_with_column_set",
+			content: `{"elements":[[{"tag":"text","text":"请升级至最新版本客户端"}]],"user_dsl":"{\"header\":{\"title\":{\"content\":\"Mesh Alarm\"}},\"elements\":[[{\"tag\":\"column_set\",\"columns\":[{\"tag\":\"column\",\"elements\":[{\"tag\":\"markdown\",\"content\":\"**PSM:**\"}]},{\"tag\":\"column\",\"elements\":[{\"tag\":\"markdown\",\"content\":\"my.service.psm\"}]}]}]]}"}`,
+			want:    "Mesh Alarm\n**PSM:**\nmy.service.psm",
+		},
+		{
+			name:    "depth_limit_nested_column_set",
+			content: buildDeeplyNestedCard(12),
+			want:    "", // checked via strings.Contains below
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractInteractiveCardText(tt.content)
+			if tt.name == "depth_limit_nested_column_set" {
+				if !strings.Contains(got, "Level 0") {
+					t.Errorf("expected 'Level 0' in output, got %q", got)
+				}
+				if strings.Contains(got, "Level 11") {
+					t.Error("depth limit should prevent full recursion, but deepest level was extracted")
+				}
+				return
+			}
 			if got != tt.want {
 				t.Errorf("extractInteractiveCardText() = %q, want %q", got, tt.want)
 			}
