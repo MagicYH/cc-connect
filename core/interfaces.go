@@ -229,6 +229,12 @@ type SystemPromptSupporter interface {
 // context leakage (issue #599): a stale ID from another project's workspace
 // would otherwise resume the wrong conversation history.
 //
+// The workDirHint parameter, when non-empty, is the previously recorded
+// workspace directory for this session (stored as Session.AgentWorkDir).
+// The agent should use it to locate the session .jsonl file instead of
+// guessing from its configured work_dir. When workDirHint is empty, the
+// agent falls back to its configured work_dir.
+//
 // Implementations should return false when:
 //   - the session ID is empty
 //   - the session file does not exist under the agent's per-project store
@@ -236,7 +242,16 @@ type SystemPromptSupporter interface {
 //
 // The engine treats a false return as "clear the stored ID and start fresh".
 type SessionIDValidator interface {
-	ValidateSessionID(ctx context.Context, sessionID string) bool
+	ValidateSessionID(ctx context.Context, sessionID string, workDirHint string) bool
+}
+
+// SessionWorkDirResolver is an optional interface for agents that can resolve
+// the actual workspace directory a session was created in. This is used by the
+// engine to record AgentWorkDir alongside AgentSessionID, so that future
+// ValidateSessionID calls can locate the session .jsonl file using the
+// correct project directory even when the agent cd'd into a subdirectory.
+type SessionWorkDirResolver interface {
+	ResolveSessionWorkDir(ctx context.Context, sessionID string) string
 }
 
 // TypingIndicator is an optional interface for platforms that can show a

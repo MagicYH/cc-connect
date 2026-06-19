@@ -18,11 +18,11 @@ const ContinueSession = "__continue__"
 
 // Session tracks one conversation between a user and the agent.
 type Session struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	AgentSessionID      string         `json:"agent_session_id"`
-	AgentType           string         `json:"agent_type,omitempty"`
-	PastAgentSessionIDs []string       `json:"past_agent_session_ids,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	AgentSessionID      string   `json:"agent_session_id"`
+	AgentType           string   `json:"agent_type,omitempty"`
+	PastAgentSessionIDs []string `json:"past_agent_session_ids,omitempty"`
 	// ActiveProvider is the agent provider name that was active when this
 	// session last took a turn. It is restored before --resume so that a
 	// cc-connect process restart does not silently drop a user's
@@ -39,6 +39,12 @@ type Session struct {
 	// processes an actual incoming user message. It is used by reset_on_idle_mins
 	// so that automated activity cannot prevent idle session rotation.
 	LastUserActivity time.Time `json:"last_user_activity,omitempty"`
+	// AgentWorkDir records the workspace directory the agent was using when
+	// AgentSessionID was assigned. This is the directory Claude Code uses to
+	// derive the project key for session storage, so ValidateSessionID can
+	// always find the session .jsonl file even when the agent cd'd into a
+	// subdirectory during the session.
+	AgentWorkDir string `json:"agent_work_dir,omitempty"`
 
 	mu   sync.Mutex `json:"-"`
 	busy bool       `json:"-"`
@@ -105,6 +111,8 @@ func (s *Session) recordPastAgentSessionID() {
 }
 
 // SetAgentInfo atomically sets the agent session ID, agent type, and name.
+// When the session ID changes, the work dir is cleared since we don't know
+// the actual workspace for the new session.
 func (s *Session) SetAgentInfo(agentSessionID, agentType, name string) {
 	if agentSessionID == ContinueSession {
 		agentSessionID = ""
@@ -113,6 +121,7 @@ func (s *Session) SetAgentInfo(agentSessionID, agentType, name string) {
 	defer s.mu.Unlock()
 	if s.AgentSessionID != agentSessionID {
 		s.recordPastAgentSessionID()
+		s.AgentWorkDir = ""
 	}
 	s.AgentSessionID = agentSessionID
 	s.AgentType = agentType
@@ -124,6 +133,14 @@ func (s *Session) GetAgentSessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.AgentSessionID
+}
+
+// GetAgentWorkDir atomically reads the workspace directory associated with
+// the current AgentSessionID.
+func (s *Session) GetAgentWorkDir() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.AgentWorkDir
 }
 
 // SetName atomically updates the session's display name. The management
@@ -189,6 +206,14 @@ func (s *Session) GetActiveProvider() string {
 // When the existing ID is replaced or cleared, it is saved to PastAgentSessionIDs
 // so filterOwnedSessions continues to recognise the session.
 func (s *Session) SetAgentSessionID(id, agentType string) {
+	s.SetAgentSessionIDWithWorkDir(id, agentType, "")
+}
+
+// SetAgentSessionIDWithWorkDir is like SetAgentSessionID but also records the
+// workspace directory the agent was operating in when the session ID was assigned.
+// This allows ValidateSessionID to locate the session .jsonl file using the
+// actual project directory rather than guessing from the configured work_dir.
+func (s *Session) SetAgentSessionIDWithWorkDir(id, agentType, workDir string) {
 	if id == ContinueSession {
 		return
 	}
@@ -199,12 +224,19 @@ func (s *Session) SetAgentSessionID(id, agentType string) {
 	}
 	s.AgentSessionID = id
 	s.AgentType = agentType
+	s.AgentWorkDir = workDir
 }
 
 // CompareAndSetAgentSessionID sets the agent session ID only if it is currently
 // empty or still holds the erroneous persisted ContinueSession sentinel.
 // Returns true if the value was set, false if a real session ID was already stored.
 func (s *Session) CompareAndSetAgentSessionID(id, agentType string) bool {
+	return s.CompareAndSetAgentSessionIDWithWorkDir(id, agentType, "")
+}
+
+// CompareAndSetAgentSessionIDWithWorkDir is like CompareAndSetAgentSessionID
+// but also records the workspace directory.
+func (s *Session) CompareAndSetAgentSessionIDWithWorkDir(id, agentType, workDir string) bool {
 	if id == "" || id == ContinueSession {
 		return false
 	}
@@ -215,6 +247,7 @@ func (s *Session) CompareAndSetAgentSessionID(id, agentType string) bool {
 	}
 	s.AgentSessionID = id
 	s.AgentType = agentType
+	s.AgentWorkDir = workDir
 	return true
 }
 
@@ -641,6 +674,7 @@ func (sm *SessionManager) saveLocked() {
 			Name:                s.Name,
 			AgentSessionID:      agentSID,
 			AgentType:           s.AgentType,
+			AgentWorkDir:        s.AgentWorkDir,
 			PastAgentSessionIDs: append([]string(nil), s.PastAgentSessionIDs...),
 			History:             append([]HistoryEntry(nil), s.History...),
 			CreatedAt:           s.CreatedAt,
@@ -762,7 +796,8 @@ func (sm *SessionManager) InvalidateForAgent(agentType string) {
 	for _, s := range sm.sessions {
 		s.mu.Lock()
 		if s.AgentSessionID != "" && s.AgentType != "" && s.AgentType != agentType {
-			slog.Info("session: invalidating stale agent session",
+			slog.Info(
+				"session: invalidating stale agent session",
 				"session", s.ID,
 				"old_agent", s.AgentType,
 				"new_agent", agentType,
@@ -828,7 +863,7 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 	defer sm.mu.Unlock()
 
 	// Group sessions by baseChat
-	chatSessions := make(map[string][]*Session) // baseChat -> sessions
+	chatSessions := make(map[string][]*Session)  // baseChat -> sessions
 	sessionToBaseChat := make(map[string]string) // session.ID -> baseChat
 
 	for userKey, sessionIDs := range sm.userSessions {
@@ -913,7 +948,8 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 			sm.deleteByIDLocked(old.ID)
 			result.RemovedSessions = append(result.RemovedSessions, old.ID)
 
-			slog.Info("session: pruned duplicate",
+			slog.Info(
+				"session: pruned duplicate",
 				"removed_session", old.ID,
 				"kept_session", keep.ID,
 				"base_chat", baseChat,
@@ -935,7 +971,8 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 
 	if len(result.RemovedSessions) > 0 {
 		sm.saveLocked()
-		slog.Info("session: prune complete",
+		slog.Info(
+			"session: prune complete",
 			"removed", len(result.RemovedSessions),
 			"merged_history", result.MergedHistory,
 			"chats_affected", result.ChatsAffected,

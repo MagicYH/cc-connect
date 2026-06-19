@@ -26,9 +26,11 @@ import (
 	"unicode/utf8"
 )
 
-const maxPlatformMessageLen = 4000
-const telegramBotCommandLimit = 100
-const defaultMaxQueuedMessages = 5 // default cap for queued messages per session
+const (
+	maxPlatformMessageLen    = 4000
+	telegramBotCommandLimit  = 100
+	defaultMaxQueuedMessages = 5 // default cap for queued messages per session
+)
 
 // previewText truncates s to maxRunes runes for safe inclusion in debug logs.
 // Truncation uses runes (not bytes) so multi-byte characters render cleanly.
@@ -270,8 +272,8 @@ type Engine struct {
 	filterExternalSessions bool
 
 	// Shell configuration for /shell, cron exec, hooks, webhook exec
-	shell       string // shell binary path (e.g. "sh", "/bin/zsh")
-	shellFlag   string // shell flag (e.g. "-c", "-Command", "/C")
+	shell        string // shell binary path (e.g. "sh", "/bin/zsh")
+	shellFlag    string // shell flag (e.g. "-c", "-Command", "/C")
 	shellProfile string // prepended to every command (e.g. "source ~/.zshrc;")
 
 	// Multi-workspace mode
@@ -444,7 +446,8 @@ func (e *Engine) logStaleUserMessageDropped(action string, msg *Message, interac
 	if msg == nil {
 		return
 	}
-	slog.Info("stale user message dropped: received from platform but create_time older than accepted watermark",
+	slog.Info(
+		"stale user message dropped: received from platform but create_time older than accepted watermark",
 		"action", action,
 		"platform", msg.Platform,
 		"session", msg.SessionKey,
@@ -457,7 +460,8 @@ func (e *Engine) logStaleUserMessageDropped(action string, msg *Message, interac
 		"watermark_queued_max_ms", snap.queuedMaxMs,
 		"watermark_completed_ms", snap.completedMs,
 	)
-	slog.Debug("stale user message dropped detail",
+	slog.Debug(
+		"stale user message dropped detail",
 		"action", action,
 		"msg_id", msg.MessageID,
 		"msg_create_time_ms", msg.UserMessageTimeMs,
@@ -2260,7 +2264,8 @@ func (e *Engine) handleMessageRecall(p Platform, msg *Message) {
 
 	if sessionKey, ok := e.findCurrentMessageSession(messageID); ok {
 		if e.stopInteractiveSessionSilently(sessionKey) {
-			slog.Info("active message recalled; session stopped",
+			slog.Info(
+				"active message recalled; session stopped",
 				"platform", p.Name(),
 				"msg_id", messageID,
 				"session", sessionKey,
@@ -2270,7 +2275,8 @@ func (e *Engine) handleMessageRecall(p Platform, msg *Message) {
 	}
 
 	if sessionKey, ok := e.removeQueuedMessageByID(messageID); ok {
-		slog.Info("queued message recalled; removed from pending queue",
+		slog.Info(
+			"queued message recalled; removed from pending queue",
 			"platform", p.Name(),
 			"msg_id", messageID,
 			"session", sessionKey,
@@ -2278,7 +2284,8 @@ func (e *Engine) handleMessageRecall(p Platform, msg *Message) {
 		return
 	}
 
-	slog.Debug("message recall ignored; no active or queued message matched",
+	slog.Debug(
+		"message recall ignored; no active or queued message matched",
 		"platform", p.Name(),
 		"msg_id", messageID,
 	)
@@ -2433,7 +2440,8 @@ func (e *Engine) stopCurrentMessageIfRecalled(sessionKey string) bool {
 	defer cancel()
 	recalled, err := detector.IsMessageRecalled(ctx, replyCtx)
 	if err != nil {
-		slog.Debug("message recall fallback check failed",
+		slog.Debug(
+			"message recall fallback check failed",
 			"platform", platform.Name(),
 			"msg_id", messageID,
 			"session", sessionKey,
@@ -2445,7 +2453,8 @@ func (e *Engine) stopCurrentMessageIfRecalled(sessionKey string) bool {
 		return false
 	}
 	if e.stopInteractiveSessionSilently(sessionKey) {
-		slog.Info("active message recalled by fallback probe; session stopped",
+		slog.Info(
+			"active message recalled by fallback probe; session stopped",
 			"platform", platform.Name(),
 			"msg_id", messageID,
 			"session", sessionKey,
@@ -2497,7 +2506,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		return
 	}
 
-	slog.Info("message received",
+	slog.Info(
+		"message received",
 		"platform", msg.Platform, "msg_id", msg.MessageID,
 		"session", msg.SessionKey, "user", msg.UserName,
 		"content_len", len(msg.Content),
@@ -2506,7 +2516,8 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	// DEBUG: full message content for in-depth debugging (release-gate testing).
 	// Gated behind DEBUG level so production INFO logs don't leak user text.
 	if slog.Default().Enabled(e.ctx, slog.LevelDebug) {
-		slog.Debug("message content",
+		slog.Debug(
+			"message content",
 			"platform", msg.Platform, "msg_id", msg.MessageID,
 			"session", msg.SessionKey, "user", msg.UserName,
 			"content", previewText(msg.Content, 500),
@@ -2739,7 +2750,8 @@ sessionLocked:
 	// instead of dropped (issue #565).
 	e.ensureInteractiveStateForQueueing(interactiveKey, p, msg.ReplyCtx)
 	e.noteUserMessageAccepted(interactiveKey, msg.UserMessageTimeMs)
-	slog.Debug("user message accepted for processing",
+	slog.Debug(
+		"user message accepted for processing",
 		"platform", msg.Platform,
 		"session", msg.SessionKey,
 		"interactive_key", interactiveKey,
@@ -2747,7 +2759,8 @@ sessionLocked:
 		"msg_create_time_ms", msg.UserMessageTimeMs,
 	)
 
-	slog.Info("processing message",
+	slog.Info(
+		"processing message",
 		"platform", msg.Platform,
 		"user", msg.UserName,
 		"session", session.ID,
@@ -2779,7 +2792,8 @@ func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions 
 		return nil
 	}
 
-	slog.Info("auto-resetting idle session",
+	slog.Info(
+		"auto-resetting idle session",
 		"session_key", msg.SessionKey,
 		"session_id", session.ID,
 		"idle_for", time.Since(lastActive),
@@ -2867,7 +2881,8 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 	queueDepth := len(state.pendingMessages)
 	state.mu.Unlock()
 
-	slog.Debug("user message accepted into queue",
+	slog.Debug(
+		"user message accepted into queue",
 		"session", msg.SessionKey,
 		"interactive_key", interactiveKey,
 		"msg_id", msg.MessageID,
@@ -2875,7 +2890,8 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		"queue_depth", queueDepth,
 	)
 
-	slog.Info("message queued for busy session",
+	slog.Info(
+		"message queued for busy session",
 		"session", msg.SessionKey,
 		"user", msg.UserName,
 		"queue_depth", queueDepth,
@@ -2955,7 +2971,8 @@ func (e *Engine) handleVoiceMessage(p Platform, msg *Message) {
 		return
 	}
 
-	slog.Info("transcribing voice message",
+	slog.Info(
+		"transcribing voice message",
 		"platform", msg.Platform, "user", msg.UserName,
 		"format", audio.Format, "size", len(audio.Data),
 	)
@@ -3659,7 +3676,8 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 			return state
 		}
 		// Tear down the stale agent so we start one that matches the Session below.
-		slog.Info("interactive session mismatch, recycling",
+		slog.Info(
+			"interactive session mismatch, recycling",
 			"session_key", sessionKey,
 			"want_agent_session", wantID,
 			"have_agent_session", currentID,
@@ -3744,7 +3762,8 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	// can detect the mismatch and we should clear the ID rather than
 	// resume a conversation that has nothing to do with this project.
 	if startSessionID != "" {
-		if validator, ok := agent.(SessionIDValidator); ok && !validator.ValidateSessionID(e.ctx, startSessionID) {
+		workDirHint := session.GetAgentWorkDir()
+		if validator, ok := agent.(SessionIDValidator); ok && !validator.ValidateSessionID(e.ctx, startSessionID, workDirHint) {
 			slog.Warn("session ID does not belong to this project, clearing it",
 				"session_key", sessionKey, "invalid_session_id", startSessionID)
 			session.SetAgentSessionID("", agent.Name())
@@ -3808,7 +3827,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		// polluting sessionNames with every forked ID.
 		wasEmpty := session.GetAgentSessionID() == ""
 		if session.GetAgentSessionID() != newID {
-			session.SetAgentSessionID(newID, agent.Name())
+			session.SetAgentSessionIDWithWorkDir(newID, agent.Name(), e.resolveWorkDirForSession(agent, newID))
 			if wasEmpty {
 				pendingName := session.GetName()
 				if pendingName != "" && pendingName != "session" && pendingName != "default" {
@@ -4905,7 +4924,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			if event.SessionID != "" {
 				wasEmpty := session.GetAgentSessionID() == ""
 				if session.GetAgentSessionID() != event.SessionID {
-					session.SetAgentSessionID(event.SessionID, e.agent.Name())
+					session.SetAgentSessionIDWithWorkDir(event.SessionID, e.agent.Name(), e.resolveWorkDirForSession(e.agent, event.SessionID))
 					if wasEmpty {
 						pendingName := session.GetName()
 						if pendingName != "" && pendingName != "session" && pendingName != "default" {
@@ -4951,7 +4970,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				sp.detachPreview() // keep frozen preview visible as permanent message
 			}
 
-			slog.Info("permission request",
+			slog.Info(
+				"permission request",
 				"request_id", event.RequestID,
 				"tool", event.ToolName,
 			)
@@ -5003,7 +5023,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// continues to read subsequent tool calls and assistant messages
 			// for the same turn. See PR #1272 / issue #481.
 			if !event.Done {
-				slog.Debug("EventResult: non-terminal result event, continuing event loop",
+				slog.Debug(
+					"EventResult: non-terminal result event, continuing event loop",
 					"session", session.ID,
 					"input_tokens", event.InputTokens,
 					"output_tokens", event.OutputTokens,
@@ -5019,7 +5040,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if currentID := state.agentSession.CurrentSessionID(); currentID != "" {
 					wasEmpty := session.GetAgentSessionID() == ""
 					if session.GetAgentSessionID() != currentID {
-						session.SetAgentSessionID(currentID, e.agent.Name())
+						session.SetAgentSessionIDWithWorkDir(currentID, e.agent.Name(), e.resolveWorkDirForSession(e.agent, currentID))
 						if wasEmpty {
 							pendingName := session.GetName()
 							if pendingName != "" && pendingName != "session" && pendingName != "default" {
@@ -5140,7 +5161,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			fullResponse = cleanResponse
 
 			turnDuration := time.Since(turnStart)
-			slog.Info("turn complete",
+			slog.Info(
+				"turn complete",
 				"session", session.ID,
 				"agent_session", session.GetAgentSessionID(),
 				"msg_id", msgID,
@@ -5153,7 +5175,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			)
 			// DEBUG: full assistant response for in-depth debugging.
 			if slog.Default().Enabled(e.ctx, slog.LevelDebug) {
-				slog.Debug("turn response",
+				slog.Debug(
+					"turn response",
 					"session", session.ID,
 					"agent_session", session.GetAgentSessionID(),
 					"history_len", session.HistoryLen(),
@@ -5363,7 +5386,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				droppedStale++
 			}
 			if droppedStale > 0 {
-				slog.Info("dropped stale queued user messages after completed turn",
+				slog.Info(
+					"dropped stale queued user messages after completed turn",
 					"session", sessionKey,
 					"dropped", droppedStale,
 				)
@@ -5483,7 +5507,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					idleTimer.Reset(e.eventIdleTimeout)
 				}
 
-				slog.Info("processing queued message",
+				slog.Info(
+					"processing queued message",
 					"session", sessionKey,
 					"remaining_queue", remainingQueue,
 				)
@@ -5693,7 +5718,8 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 			droppedStale++
 		}
 		if droppedStale > 0 {
-			slog.Info("dropped stale queued user messages while draining",
+			slog.Info(
+				"dropped stale queued user messages while draining",
 				"session", sessionKey,
 				"dropped", droppedStale,
 			)
@@ -5831,7 +5857,8 @@ func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
 func matchPrefix(prefix string, candidates []struct {
 	names []string
 	id    string
-}) string {
+},
+) string {
 	// Exact match first
 	for _, c := range candidates {
 		for _, n := range c.names {
@@ -6989,7 +7016,13 @@ func replyFooterWorkDir(session AgentSession, agent Agent, workspaceDir string) 
 	if dir == "" {
 		return ""
 	}
-	return compactReplyFooterPath(dir)
+	result := compactReplyFooterPath(dir)
+	if session != nil {
+		if sid := strings.TrimSpace(session.CurrentSessionID()); sid != "" {
+			result += " · " + sid
+		}
+	}
+	return result
 }
 
 func compactReplyFooterPath(path string) string {
@@ -8048,7 +8081,8 @@ func (e *Engine) cmdStatus(p Platform, msg *Message) {
 			userIDStr = e.i18n.Tf(MsgStatusUserID, msg.UserID)
 		}
 
-		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgStatusTitle,
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(
+			MsgStatusTitle,
 			e.name,
 			agent.Name(),
 			workDirStr,
@@ -8467,7 +8501,8 @@ func (e *Engine) renderStatusCard(sessionKey string, userID string) *Card {
 		userIDStr = e.i18n.Tf(MsgStatusUserID, userID)
 	}
 
-	statusText := e.i18n.Tf(MsgStatusTitle,
+	statusText := e.i18n.Tf(
+		MsgStatusTitle,
 		e.name,
 		agent.Name(),
 		workDirStr,
@@ -9477,6 +9512,16 @@ func (e *Engine) cmdTTS(p Platform, msg *Message, args []string) {
 	}
 }
 
+// resolveWorkDirForSession asks the agent to resolve the actual workspace
+// directory for a session ID (via SessionWorkDirResolver), so the engine can
+// record it alongside the session ID for accurate future validation.
+func (e *Engine) resolveWorkDirForSession(agent Agent, sessionID string) string {
+	if resolver, ok := agent.(SessionWorkDirResolver); ok {
+		return resolver.ResolveSessionWorkDir(e.ctx, sessionID)
+	}
+	return ""
+}
+
 func (e *Engine) cmdStop(p Platform, msg *Message) {
 	// /stop only tears down the live agent process; it preserves the stored
 	// AgentSessionID so the next message can --resume the conversation. This
@@ -9673,7 +9718,6 @@ func (e *Engine) runCompress(state *interactiveState, session *Session, sessions
 // Unlike processInteractiveEvents it does NOT record history and treats
 // an empty result as success rather than "(empty response)".
 func (e *Engine) processCompressEvents(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string, p Platform, replyCtx any, unlocked *bool, auto bool) {
-
 	var textParts []string
 	events := state.agentSession.Events()
 	stopCh := state.stopSignal()
@@ -10652,12 +10696,18 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 				"perm_body":  body,
 			}
 		}
-		allowBtn := CardButton{Text: e.i18n.T(MsgPermBtnAllow), Type: "primary", Value: "perm:allow",
-			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllow), "green")}
-		denyBtn := CardButton{Text: e.i18n.T(MsgPermBtnDeny), Type: "danger", Value: "perm:deny",
-			Extra: extra("❌ "+e.i18n.T(MsgPermBtnDeny), "red")}
-		allowAllBtn := CardButton{Text: e.i18n.T(MsgPermBtnAllowAll), Type: "default", Value: "perm:allow_all",
-			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllowAll), "green")}
+		allowBtn := CardButton{
+			Text: e.i18n.T(MsgPermBtnAllow), Type: "primary", Value: "perm:allow",
+			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllow), "green"),
+		}
+		denyBtn := CardButton{
+			Text: e.i18n.T(MsgPermBtnDeny), Type: "danger", Value: "perm:deny",
+			Extra: extra("❌ "+e.i18n.T(MsgPermBtnDeny), "red"),
+		}
+		allowAllBtn := CardButton{
+			Text: e.i18n.T(MsgPermBtnAllowAll), Type: "default", Value: "perm:allow_all",
+			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllowAll), "green"),
+		}
 
 		card := NewCard().
 			Title(e.i18n.T(MsgPermCardTitle), "orange").
@@ -11916,8 +11966,12 @@ func (e *Engine) renderLangCard() *Card {
 	name := langDisplayName(cur)
 
 	langs := []struct{ code, label string }{
-		{"en", "English"}, {"zh", "中文"}, {"zh-TW", "繁體中文"},
-		{"ja", "日本語"}, {"es", "Español"}, {"auto", "Auto"},
+		{"en", "English"},
+		{"zh", "中文"},
+		{"zh-TW", "繁體中文"},
+		{"ja", "日本語"},
+		{"es", "Español"},
+		{"auto", "Auto"},
 	}
 	var opts []CardSelectOption
 	initVal := ""
@@ -13472,7 +13526,8 @@ func (e *Engine) cmdHeartbeatStatusText(p Platform, msg *Message, st *HeartbeatS
 		}
 	}
 
-	e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgHeartbeatStatus),
+	e.reply(p, msg.ReplyCtx, fmt.Sprintf(
+		e.i18n.T(MsgHeartbeatStatus),
 		stateStr(st.Paused),
 		st.IntervalMins,
 		yesNo(st.OnlyWhenIdle),
@@ -13557,7 +13612,8 @@ func (e *Engine) renderHeartbeatCard() *Card {
 		}
 	}
 
-	body := fmt.Sprintf(e.i18n.T(MsgHeartbeatStatus),
+	body := fmt.Sprintf(
+		e.i18n.T(MsgHeartbeatStatus),
 		stateStr(st.Paused),
 		st.IntervalMins,
 		yesNo(st.OnlyWhenIdle),
@@ -13618,7 +13674,8 @@ func (e *Engine) executeCustomCommand(p Platform, msg *Message, cmd *CustomComma
 		return
 	}
 
-	slog.Info("executing custom command",
+	slog.Info(
+		"executing custom command",
 		"command", cmd.Name,
 		"source", cmd.Source,
 		"user", msg.UserName,
@@ -13631,7 +13688,8 @@ func (e *Engine) executeCustomCommand(p Platform, msg *Message, cmd *CustomComma
 
 // executeShellCommand runs a shell command and sends the output to the user.
 func (e *Engine) executeShellCommand(p Platform, msg *Message, cmd *CustomCommand, args []string) {
-	slog.Info("executing shell command",
+	slog.Info(
+		"executing shell command",
 		"command", cmd.Name,
 		"exec", cmd.Exec,
 		"user", msg.UserName,
@@ -13846,7 +13904,8 @@ func (e *Engine) executeSkill(p Platform, msg *Message, skill *Skill, args []str
 		return
 	}
 
-	slog.Info("executing skill",
+	slog.Info(
+		"executing skill",
 		"skill", skill.Name,
 		"source", skill.Source,
 		"user", msg.UserName,
@@ -14854,10 +14913,10 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey,
 		}
 		changed := false
 		if force {
-			session.SetAgentSessionID(id, agent.Name())
+			session.SetAgentSessionIDWithWorkDir(id, agent.Name(), e.resolveWorkDirForSession(agent, id))
 			changed = true
 		} else {
-			changed = session.CompareAndSetAgentSessionID(id, agent.Name())
+			changed = session.CompareAndSetAgentSessionIDWithWorkDir(id, agent.Name(), e.resolveWorkDirForSession(agent, id))
 		}
 		if !changed {
 			return
@@ -14930,7 +14989,7 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey,
 			// Relay timed out. Let the agent finish its turn in the
 			// background so the session state is saved cleanly and the
 			// session remains resumable for the next relay call.
-			go e.drainRelaySession(agentSession, session, sessions, agent.Name(), relaySessionKey)
+			go e.drainRelaySession(agentSession, session, sessions, agent, relaySessionKey)
 			return relayPartialResponseOrError(ctx.Err(), textParts, fromProject, e.name)
 		}
 	}
@@ -14954,7 +15013,8 @@ func relayPartialResponseOrError(ctxErr error, textParts []string, fromProject, 
 	}
 
 	resp := strings.Join(textParts, "")
-	slog.Warn("relay: context done before final result; returning partial response",
+	slog.Warn(
+		"relay: context done before final result; returning partial response",
 		"from", fromProject,
 		"to", toProject,
 		"error", ctxErr,
@@ -14967,7 +15027,7 @@ func relayPartialResponseOrError(ctxErr error, textParts []string, fromProject, 
 // agent finish its current turn (saving the session ID for future resumption),
 // auto-approves any permission requests, and then closes the session. A 10-minute
 // safety timeout prevents the goroutine from leaking if the agent hangs.
-func (e *Engine) drainRelaySession(agentSession AgentSession, session *Session, sessions *SessionManager, agentName, relaySessionKey string) {
+func (e *Engine) drainRelaySession(agentSession AgentSession, session *Session, sessions *SessionManager, agent Agent, relaySessionKey string) {
 	timer := time.NewTimer(10 * time.Minute)
 	defer timer.Stop()
 
@@ -14980,7 +15040,7 @@ func (e *Engine) drainRelaySession(agentSession AgentSession, session *Session, 
 				return
 			}
 			if ev.SessionID != "" {
-				session.SetAgentSessionID(ev.SessionID, agentName)
+				session.SetAgentSessionIDWithWorkDir(ev.SessionID, agent.Name(), e.resolveWorkDirForSession(agent, ev.SessionID))
 				sessions.Save()
 			}
 			switch ev.Type {
@@ -15679,7 +15739,8 @@ func (e *Engine) handleWorkspaceInitFlow(p Platform, msg *Message, channelName s
 		e.initFlowsMu.Unlock()
 
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(
-			"I'll clone `%s` to `%s` and bind it to this channel. OK? (yes/no)", content, cloneTo))
+			"I'll clone `%s` to `%s` and bind it to this channel. OK? (yes/no)", content, cloneTo,
+		))
 		return true
 
 	case "awaiting_confirm":

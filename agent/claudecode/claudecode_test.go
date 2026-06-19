@@ -451,7 +451,7 @@ func TestFindProjectDir_NonASCIIPath(t *testing.T) {
 
 	// Create the mock project directory
 	mockProjectDir := filepath.Join(projectsBase, expectedKey)
-	if err := os.MkdirAll(mockProjectDir, 0755); err != nil {
+	if err := os.MkdirAll(mockProjectDir, 0o755); err != nil {
 		t.Fatalf("failed to create mock project dir: %v", err)
 	}
 
@@ -471,7 +471,7 @@ func TestFindProjectDir_ASCIIPath(t *testing.T) {
 	expectedKey := encodeClaudeProjectKey(asciiWorkDir)
 
 	mockProjectDir := filepath.Join(projectsBase, expectedKey)
-	if err := os.MkdirAll(mockProjectDir, 0755); err != nil {
+	if err := os.MkdirAll(mockProjectDir, 0o755); err != nil {
 		t.Fatalf("failed to create mock project dir: %v", err)
 	}
 
@@ -505,7 +505,7 @@ func TestFindProjectDir_ICloudPath(t *testing.T) {
 	expectedKey := "-Users-test-Library-Mobile-Documents-com-apple-CloudDocs-my-project"
 
 	mockProjectDir := filepath.Join(projectsBase, expectedKey)
-	if err := os.MkdirAll(mockProjectDir, 0755); err != nil {
+	if err := os.MkdirAll(mockProjectDir, 0o755); err != nil {
 		t.Fatalf("failed to create mock project dir: %v", err)
 	}
 
@@ -697,7 +697,7 @@ func TestScanSessionMeta_ArrayContent(t *testing.T) {
 	for _, line := range lines {
 		data += line + "\n"
 	}
-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatalf("write test jsonl: %v", err)
 	}
 
@@ -729,7 +729,7 @@ func TestScanSessionMeta_AllArrayContent(t *testing.T) {
 	for _, line := range lines {
 		data += line + "\n"
 	}
-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatalf("write test jsonl: %v", err)
 	}
 
@@ -867,10 +867,104 @@ func TestValidateSessionIDInProject_CrossProjectLeak(t *testing.T) {
 	}
 }
 
+// TestValidateSessionIDInProject_SubdirWorkspace is the regression test for
+// the /stop-loses-session bug: when Claude Code creates a session inside a
+// subdirectory workspace (e.g. workDir/ws-dev-skills), the session .jsonl
+// ends up under that child project dir. The validator must still find it
+// when given the parent workDir, so that /stop → resume works correctly.
+func TestValidateSessionIDInProject_SubdirWorkspace(t *testing.T) {
+	homeDir := t.TempDir()
+	projectsBase := filepath.Join(homeDir, ".claude", "projects")
+
+	workDir := filepath.Join(homeDir, "work", "Bytedance")
+	subdirWorkDir := filepath.Join(workDir, "ws-dev-skills")
+
+	// Create the subdir project dir (simulates Claude Code cd'ing into it)
+	subdirKey := encodeClaudeProjectKey(subdirWorkDir)
+	subdirProjectDir := filepath.Join(projectsBase, subdirKey)
+	if err := os.MkdirAll(subdirProjectDir, 0o755); err != nil {
+		t.Fatalf("create subdir project dir: %v", err)
+	}
+
+	sessionID := "794bd2ea-60a9-4944-b982-612f34c4d832"
+	if err := os.WriteFile(filepath.Join(subdirProjectDir, sessionID+".jsonl"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	// The parent workDir should still find the session in the subdir project
+	if !validateSessionIDInProject(homeDir, workDir, sessionID) {
+		t.Error("validateSessionIDInProject failed to find session in subdir workspace")
+	}
+}
+
+// TestValidateSessionIDInProject_SubdirWorkspaceNoLeakage ensures that the
+// subdir fallback doesn't leak sessions across sibling projects. A session
+// created under workDir/subA must NOT validate for workDir/subB.
+func TestValidateSessionIDInProject_SubdirWorkspaceNoLeakage(t *testing.T) {
+	homeDir := t.TempDir()
+	projectsBase := filepath.Join(homeDir, ".claude", "projects")
+
+	workDir := filepath.Join(homeDir, "work", "Bytedance")
+	siblingDir := filepath.Join(homeDir, "work", "OtherProject")
+
+	// Create a subdir under workDir
+	subdirKey := encodeClaudeProjectKey(filepath.Join(workDir, "subA"))
+	subdirProjectDir := filepath.Join(projectsBase, subdirKey)
+	if err := os.MkdirAll(subdirProjectDir, 0o755); err != nil {
+		t.Fatalf("create subdir project dir: %v", err)
+	}
+
+	sessionID := "session-in-subdir"
+	if err := os.WriteFile(filepath.Join(subdirProjectDir, sessionID+".jsonl"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	// siblingDir should NOT see the session (different prefix)
+	if validateSessionIDInProject(homeDir, siblingDir, sessionID) {
+		t.Error("validateSessionIDInProject leaked subdir session to sibling project")
+	}
+}
+
 // TestAgent_ImplementsSessionIDValidator is a compile-time check that the
 // production *Agent satisfies core.SessionIDValidator. If the interface
 // or its method signature drifts, this test stops compiling before the
 // regression can ship.
 func TestAgent_ImplementsSessionIDValidator(t *testing.T) {
 	var _ core.SessionIDValidator = (*Agent)(nil)
+}
+
+// TestAgent_ImplementsSessionWorkDirResolver is a compile-time check that the
+// production *Agent satisfies core.SessionWorkDirResolver.
+func TestAgent_ImplementsSessionWorkDirResolver(t *testing.T) {
+	var _ core.SessionWorkDirResolver = (*Agent)(nil)
+}
+
+// TestValidateSessionID_WorkDirHint verifies the primary /stop fix: when a
+// session was created in a subdirectory workspace (e.g. workDir/ws-dev-skills)
+// and the AgentWorkDir was recorded, the validator uses the hint to find the
+// session .jsonl file directly — without needing to scan all project dirs.
+func TestValidateSessionID_WorkDirHint(t *testing.T) {
+	homeDir := t.TempDir()
+	projectsBase := filepath.Join(homeDir, ".claude", "projects")
+
+	configuredWorkDir := filepath.Join(homeDir, "work", "Bytedance")
+	actualWorkDir := filepath.Join(configuredWorkDir, "ws-dev-skills")
+
+	// Create the actual workspace's project dir
+	actualKey := encodeClaudeProjectKey(actualWorkDir)
+	actualProjectDir := filepath.Join(projectsBase, actualKey)
+	if err := os.MkdirAll(actualProjectDir, 0o755); err != nil {
+		t.Fatalf("create actual project dir: %v", err)
+	}
+
+	sessionID := "794bd2ea-60a9-4944-b982-612f34c4d832"
+	if err := os.WriteFile(filepath.Join(actualProjectDir, sessionID+".jsonl"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	// With workDirHint pointing to the actual workspace, the session IS found
+	// directly via findProjectDir (no full scan needed).
+	if !validateSessionIDInProject(homeDir, actualWorkDir, sessionID) {
+		t.Error("validateSessionIDInProject with workDirHint failed to find session")
+	}
 }

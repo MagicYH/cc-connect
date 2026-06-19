@@ -48,9 +48,9 @@ type Agent struct {
 	providers        []core.ProviderConfig
 	activeIdx        int // -1 = no provider set
 	sessionEnv       []string
-	routerURL        string // Claude Code Router URL (e.g., "http://127.0.0.1:3456")
-	routerAPIKey     string // Claude Code Router API key (optional)
-	systemPrompt     string // Custom system prompt to pass to Claude CLI
+	routerURL        string   // Claude Code Router URL (e.g., "http://127.0.0.1:3456")
+	routerAPIKey     string   // Claude Code Router API key (optional)
+	systemPrompt     string   // Custom system prompt to pass to Claude CLI
 	pluginDirs       []string // Plugin directories to load via --plugin-dir (repeatable)
 
 	appendSystemPrompt string // Custom text appended to the system prompt (keeps Claude's default)
@@ -76,41 +76,41 @@ type Agent struct {
 }
 
 var claudeProviderManagedEnvVars = map[string]struct{}{
-	"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST":                  {},
-	"CLAUDE_CODE_USE_BEDROCK":                               {},
-	"CLAUDE_CODE_USE_VERTEX":                                {},
-	"CLAUDE_CODE_USE_FOUNDRY":                               {},
-	"ANTHROPIC_BASE_URL":                                    {},
-	"ANTHROPIC_BEDROCK_BASE_URL":                            {},
-	"ANTHROPIC_VERTEX_BASE_URL":                             {},
-	"ANTHROPIC_FOUNDRY_BASE_URL":                            {},
-	"ANTHROPIC_FOUNDRY_RESOURCE":                            {},
-	"ANTHROPIC_VERTEX_PROJECT_ID":                           {},
-	"CLOUD_ML_REGION":                                       {},
-	"ANTHROPIC_API_KEY":                                     {},
-	"ANTHROPIC_AUTH_TOKEN":                                  {},
-	"CLAUDE_CODE_OAUTH_TOKEN":                               {},
-	"AWS_BEARER_TOKEN_BEDROCK":                              {},
-	"ANTHROPIC_FOUNDRY_API_KEY":                             {},
-	"CLAUDE_CODE_SKIP_BEDROCK_AUTH":                         {},
-	"CLAUDE_CODE_SKIP_VERTEX_AUTH":                          {},
-	"CLAUDE_CODE_SKIP_FOUNDRY_AUTH":                         {},
-	"ANTHROPIC_MODEL":                                       {},
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL":                         {},
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION":             {},
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":                    {},
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES":  {},
-	"ANTHROPIC_DEFAULT_OPUS_MODEL":                          {},
-	"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION":              {},
-	"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":                     {},
-	"ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES":   {},
+	"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST":                 {},
+	"CLAUDE_CODE_USE_BEDROCK":                              {},
+	"CLAUDE_CODE_USE_VERTEX":                               {},
+	"CLAUDE_CODE_USE_FOUNDRY":                              {},
+	"ANTHROPIC_BASE_URL":                                   {},
+	"ANTHROPIC_BEDROCK_BASE_URL":                           {},
+	"ANTHROPIC_VERTEX_BASE_URL":                            {},
+	"ANTHROPIC_FOUNDRY_BASE_URL":                           {},
+	"ANTHROPIC_FOUNDRY_RESOURCE":                           {},
+	"ANTHROPIC_VERTEX_PROJECT_ID":                          {},
+	"CLOUD_ML_REGION":                                      {},
+	"ANTHROPIC_API_KEY":                                    {},
+	"ANTHROPIC_AUTH_TOKEN":                                 {},
+	"CLAUDE_CODE_OAUTH_TOKEN":                              {},
+	"AWS_BEARER_TOKEN_BEDROCK":                             {},
+	"ANTHROPIC_FOUNDRY_API_KEY":                            {},
+	"CLAUDE_CODE_SKIP_BEDROCK_AUTH":                        {},
+	"CLAUDE_CODE_SKIP_VERTEX_AUTH":                         {},
+	"CLAUDE_CODE_SKIP_FOUNDRY_AUTH":                        {},
+	"ANTHROPIC_MODEL":                                      {},
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL":                        {},
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION":            {},
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":                   {},
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": {},
+	"ANTHROPIC_DEFAULT_OPUS_MODEL":                         {},
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION":             {},
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":                    {},
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES":  {},
 
 	// Provider-specific base URL env vars for thinking rewrite proxy routing.
 	// These are set by cc-connect when thinking override is needed for
 	// Bedrock/Vertex/Foundry providers that don't use base_url config.
-	"ANTHROPIC_BEDROCK_PROXY_BASE_URL": {},
-	"ANTHROPIC_VERTEX_PROXY_BASE_URL":  {},
-	"ANTHROPIC_FOUNDRY_PROXY_BASE_URL": {},
+	"ANTHROPIC_BEDROCK_PROXY_BASE_URL":                      {},
+	"ANTHROPIC_VERTEX_PROXY_BASE_URL":                       {},
+	"ANTHROPIC_FOUNDRY_PROXY_BASE_URL":                      {},
 	"ANTHROPIC_DEFAULT_SONNET_MODEL":                        {},
 	"ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION":            {},
 	"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":                   {},
@@ -451,7 +451,12 @@ func (a *Agent) SetPlatformPrompt(prompt string) {
 // resume a session whose stored ID was inherited from another project, the
 // engine calls this and — on a false return — clears the ID and starts a
 // fresh session instead of reloading the wrong conversation.
-func (a *Agent) ValidateSessionID(_ context.Context, sessionID string) bool {
+//
+// The workDirHint parameter, when non-empty, is the previously recorded
+// workspace directory for this session (from Session.AgentWorkDir). When
+// provided, the agent uses it to locate the session .jsonl file instead of
+// deriving the project directory from its configured work_dir.
+func (a *Agent) ValidateSessionID(_ context.Context, sessionID string, workDirHint string) bool {
 	if sessionID == "" {
 		return false
 	}
@@ -459,10 +464,64 @@ func (a *Agent) ValidateSessionID(_ context.Context, sessionID string) bool {
 	if err != nil {
 		return false
 	}
+	// If a workDir hint is available, use it directly — it's the authoritative
+	// location where the session .jsonl was stored.
+	if workDirHint != "" {
+		return validateSessionIDInProject(homeDir, workDirHint, sessionID)
+	}
+	// Fallback: use the agent's configured work_dir.
 	a.mu.RLock()
 	workDir := a.workDir
 	a.mu.RUnlock()
 	return validateSessionIDInProject(homeDir, workDir, sessionID)
+}
+
+// ResolveSessionWorkDir finds the actual workspace directory where a session
+// was created. It searches ~/.claude/projects/ for the session's .jsonl file
+// and returns the workDir that would produce that project directory.
+// Returns "" if the session cannot be found.
+func (a *Agent) ResolveSessionWorkDir(_ context.Context, sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projectDir := findSessionProjectDir(homeDir, sessionID)
+	if projectDir == "" {
+		return ""
+	}
+	// Try all known workDirs (configured + subdirectories) to find which one
+	// maps to this project directory.
+	a.mu.RLock()
+	configuredWorkDir := a.workDir
+	a.mu.RUnlock()
+	absWorkDir, err := filepath.Abs(configuredWorkDir)
+	if err != nil {
+		return ""
+	}
+	configuredProjectDir := findProjectDir(homeDir, absWorkDir)
+	if configuredProjectDir == projectDir {
+		return absWorkDir
+	}
+	// The session is in a different project dir. Walk subdirectories of
+	// the configured workDir to find which one maps to this project dir.
+	entries, err := os.ReadDir(absWorkDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		childPath := filepath.Join(absWorkDir, entry.Name())
+		childProjectDir := findProjectDir(homeDir, childPath)
+		if childProjectDir == projectDir {
+			return childPath
+		}
+	}
+	return ""
 }
 
 // validateSessionIDInProject checks whether sessionID has a .jsonl file
@@ -480,13 +539,83 @@ func validateSessionIDInProject(homeDir, workDir, sessionID string) bool {
 	if err != nil {
 		return false
 	}
+	// Direct match: check the project dir for workDir itself.
 	projectDir := findProjectDir(homeDir, absWorkDir)
-	if projectDir == "" {
+	if projectDir != "" {
+		path := filepath.Join(projectDir, sessionID+".jsonl")
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	// Subdir workspace fallback: Claude Code may have cd'd into a child
+	// directory, creating the session .jsonl under that child's project
+	// key. Search ~/.claude/projects/ for the session, then verify the
+	// found project dir maps back to workDir or a child of workDir by
+	// scanning entries and checking their encoded keys.
+	sessionProjectDir := findSessionProjectDir(homeDir, sessionID)
+	if sessionProjectDir == "" {
 		return false
 	}
-	path := filepath.Join(projectDir, sessionID+".jsonl")
-	_, err = os.Stat(path)
-	return err == nil
+	// Already checked the direct match above; skip it.
+	if sessionProjectDir == projectDir {
+		return false
+	}
+	// The found project dir's name is an encoded path. Check whether it
+	// encodes to a path that is absWorkDir or a child of absWorkDir by
+	// scanning the filesystem for actual child directories and encoding them.
+	return projectDirBelongsToWorkDir(homeDir, absWorkDir, sessionProjectDir)
+}
+
+// projectDirBelongsToWorkDir checks whether the given projectDir (found under
+// ~/.claude/projects/) corresponds to absWorkDir or a subdirectory of absWorkDir.
+// It does this by encoding absWorkDir and its children and comparing against the
+// projectDir's basename.
+func projectDirBelongsToWorkDir(homeDir, absWorkDir, projectDir string) bool {
+	projectDirName := filepath.Base(projectDir)
+	// Check if projectDir matches the workDir itself.
+	if encodeClaudeProjectKey(absWorkDir) == projectDirName {
+		return true
+	}
+	// Check if the directory exists on disk and scan its children.
+	entries, err := os.ReadDir(absWorkDir)
+	if err != nil {
+		// Directory doesn't exist on disk; try a heuristic: check if
+		// the encoded key starts with the workDir's encoded prefix.
+		prefix := encodeClaudeProjectKey(absWorkDir + string(filepath.Separator))
+		return strings.HasPrefix(projectDirName, prefix)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		childPath := filepath.Join(absWorkDir, entry.Name())
+		if encodeClaudeProjectKey(childPath) == projectDirName {
+			return true
+		}
+	}
+	return false
+}
+
+// findSessionProjectDir searches ~/.claude/projects/ for any project directory
+// that contains a .jsonl file for the given sessionID. Returns the full path
+// to the project directory, or "" if not found.
+func findSessionProjectDir(homeDir, sessionID string) string {
+	projectsBase := filepath.Join(homeDir, ".claude", "projects")
+	entries, err := os.ReadDir(projectsBase)
+	if err != nil {
+		return ""
+	}
+	target := sessionID + ".jsonl"
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(projectsBase, entry.Name(), target)
+		if _, err := os.Stat(path); err == nil {
+			return filepath.Join(projectsBase, entry.Name())
+		}
+	}
+	return ""
 }
 
 // StartSession creates a persistent interactive Claude Code session.

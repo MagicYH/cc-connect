@@ -1472,14 +1472,24 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		})
 
 	case "interactive":
+		slog.Info(
+			p.tag()+": interactive card raw content",
+			"message_id", messageID,
+			"content", content,
+		)
 		text := extractInteractiveCardText(content)
+		slog.Info(
+			p.tag()+": interactive card extracted text",
+			"message_id", messageID,
+			"extracted_text", text,
+		)
 		text = stripMentions(text, mentions, p.getBotOpenID(), p.getBotName())
 		if botName := p.getBotName(); botName != "" {
 			text = strings.ReplaceAll(text, "@"+botName, "")
 			text = strings.TrimSpace(text)
 		}
 		if text == "" && quoted.text == "" && len(quoted.images) == 0 {
-			slog.Debug(
+			slog.Info(
 				p.tag()+": dropping empty interactive card after mention stripping",
 				"message_id", messageID,
 				"mentions", len(mentions),

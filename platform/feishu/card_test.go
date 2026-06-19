@@ -3,11 +3,14 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
@@ -378,57 +381,57 @@ func TestCardContainsMention(t *testing.T) {
 	})
 
 	tests := []struct {
-		name      string
-		card      *core.Card
-		chatID    string
+		name        string
+		card        *core.Card
+		chatID      string
 		wantMention bool
 	}{
 		{
-			name:      "no mention",
-			card:      core.NewCard().Markdown("hello world").Build(),
-			chatID:    "oc_test",
+			name:        "no mention",
+			card:        core.NewCard().Markdown("hello world").Build(),
+			chatID:      "oc_test",
 			wantMention: false,
 		},
 		{
-			name:      "at-name resolves to mention",
-			card:      core.NewCard().Markdown("hey @Alice check this").Build(),
-			chatID:    "oc_test",
+			name:        "at-name resolves to mention",
+			card:        core.NewCard().Markdown("hey @Alice check this").Build(),
+			chatID:      "oc_test",
 			wantMention: true,
 		},
 		{
-			name:      "pre-existing at tag",
-			card:      core.NewCard().Markdown(`<at user_id="ou_bob">Bob</at> hello`).Build(),
-			chatID:    "oc_test",
+			name:        "pre-existing at tag",
+			card:        core.NewCard().Markdown(`<at user_id="ou_bob">Bob</at> hello`).Build(),
+			chatID:      "oc_test",
 			wantMention: true,
 		},
 		{
-			name:      "unknown name not resolved",
-			card:      core.NewCard().Markdown("@UnknownPerson hello").Build(),
-			chatID:    "oc_test",
+			name:        "unknown name not resolved",
+			card:        core.NewCard().Markdown("@UnknownPerson hello").Build(),
+			chatID:      "oc_test",
 			wantMention: false,
 		},
 		{
-			name:      "mention in note element",
-			card:      core.NewCard().Markdown("body").Note("@Alice see this").Build(),
-			chatID:    "oc_test",
+			name:        "mention in note element",
+			card:        core.NewCard().Markdown("body").Note("@Alice see this").Build(),
+			chatID:      "oc_test",
 			wantMention: true,
 		},
 		{
-			name:      "mention in list item",
-			card:      core.NewCard().ListItem("@Alice task", "Done", "act:/done").Build(),
-			chatID:    "oc_test",
+			name:        "mention in list item",
+			card:        core.NewCard().ListItem("@Alice task", "Done", "act:/done").Build(),
+			chatID:      "oc_test",
 			wantMention: true,
 		},
 		{
-			name:      "empty chatID skips resolution",
-			card:      core.NewCard().Markdown("@Alice hello").Build(),
-			chatID:    "",
+			name:        "empty chatID skips resolution",
+			card:        core.NewCard().Markdown("@Alice hello").Build(),
+			chatID:      "",
 			wantMention: false,
 		},
 		{
-			name:      "at in button text",
-			card:      core.NewCard().Buttons(core.DefaultBtn("@Alice", "act:/ping")).Build(),
-			chatID:    "oc_test",
+			name:        "at in button text",
+			card:        core.NewCard().Buttons(core.DefaultBtn("@Alice", "act:/ping")).Build(),
+			chatID:      "oc_test",
 			wantMention: true,
 		},
 	}
@@ -489,62 +492,34 @@ func TestContainsAtTag(t *testing.T) {
 	}
 }
 
-func TestUpdateMessage_MentionFallback(t *testing.T) {
-	// Verify that containsAtTag correctly detects <at> tags in card JSON.
-	// json.Marshal escapes < to <, so we need to check for the escaped form too.
+func TestSendPreviewStart_MentionAllowed(t *testing.T) {
+	// Verify that SendPreviewStart no longer blocks cards containing <at> tags.
+	// Cards with mentions are now sent normally; the receiving bot uses name-based
+	// mention matching to detect when it is mentioned.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, map[string]any{"code": 0, "msg": "success"})
+	}))
+	defer srv.Close()
 
-	// Case 1: Content with <at> tag goes through buildCardJSON (which uses json.Marshal)
-	content := `<at user_id="ou_abc">Alice</at> please review`
-	cardJSON := buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)))
-	if !containsAtTag(cardJSON) {
-		t.Errorf("expected card JSON to contain <at> tag (escaped), got: %s", cardJSON)
-	}
-
-	// Case 2: Card JSON input from BuildRichCard (also uses json.Marshal)
-	richCardJSON := buildCardJSONWithStatusFooter(
-		sanitizeMarkdownURLs(preprocessFeishuMarkdown(content)),
-		"footer",
-	)
-	if !containsAtTag(richCardJSON) {
-		t.Errorf("expected status footer card JSON to contain <at> tag (escaped), got: %s", richCardJSON)
-	}
-
-	// Case 3: Plain content without mentions should NOT trigger fallback
-	plainContent := "hello world"
-	plainCardJSON := buildCardJSON(sanitizeMarkdownURLs(preprocessFeishuMarkdown(plainContent)))
-	if containsAtTag(plainCardJSON) {
-		t.Errorf("expected plain card JSON NOT to contain <at> tag, got: %s", plainCardJSON)
-	}
-
-	// Case 4: Raw <at> tag in non-JSON content (direct text)
-	if !containsAtTag(`<at user_id="ou_abc">Alice</at> hello`) {
-		t.Errorf("expected raw <at> tag to be detected")
-	}
-}
-
-func TestSendPreviewStart_MentionFallback(t *testing.T) {
-	// Verify that SendPreviewStart returns ErrNotSupported when the card JSON
-	// contains <at> tags (even in json.Marshal-escaped form).
-	// The check must happen BEFORE createCardEntity, so a nil client won't crash.
 	p := &Platform{
 		platformName:       "feishu_test",
 		useInteractiveCard: true,
+		client: lark.NewClient(
+			"test_app", "test_secret",
+			lark.WithOpenBaseUrl(srv.URL),
+			lark.WithHttpClient(srv.Client()),
+		),
 	}
 
 	rc := replyContext{chatID: "oc_test", messageID: "om_parent"}
 
-	// Card JSON produced by BuildRichCard with <at> tag inside.
-	// json.Marshal escapes < to < so the content contains the escaped form.
+	// Card JSON with <at> tag — should NOT return ErrNotSupported.
 	mentionContent := buildCardJSON(`<at user_id="ou_abc">Alice</at> hello`)
 	_, err := p.SendPreviewStart(context.Background(), rc, mentionContent)
-	if err != core.ErrNotSupported {
-		t.Errorf("SendPreviewStart with mention = %v, want ErrNotSupported", err)
+	if err == core.ErrNotSupported {
+		t.Errorf("SendPreviewStart with mention returned ErrNotSupported, but mentions should now be allowed")
 	}
-
-	// Plain content without mentions: the mention check passes, but the API call
-	// will fail. We only verify that ErrNotSupported is NOT returned — any other
-	// error (or panic) is expected since there's no real Lark client.
-	// This path is covered by TestContainsAtTag (no false positives on plain text).
 }
 
 func TestBuildReplyContent_MentionForcesPost(t *testing.T) {
@@ -569,9 +544,9 @@ func TestSendWithStatusFooter_PlainTextUsesPost(t *testing.T) {
 	// Verify the logic that SendWithStatusFooter uses: plain-text content + footer
 	// should produce a MsgTypePost with footer appended as italic, not an interactive card.
 	tests := []struct {
-		name      string
-		content   string
-		wantCard  bool // true = MsgTypeInteractive, false = MsgTypePost
+		name     string
+		content  string
+		wantCard bool // true = MsgTypeInteractive, false = MsgTypePost
 	}{
 		{
 			name:     "pure Chinese text",

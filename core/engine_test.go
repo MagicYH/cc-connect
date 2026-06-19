@@ -1217,7 +1217,7 @@ func TestProcessInteractiveEvents_AppendsReplyFooterWhenEnabled(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent = %#v, want one final reply", sent)
 	}
-	want := "answer\n\n*gpt-5.4 · xhigh · 100% left · " + compactReplyFooterPath(workDir) + "*"
+	want := "answer\n\n*gpt-5.4 · xhigh · 100% left · " + compactReplyFooterPath(workDir) + " · s-footer*"
 	if sent[0] != want {
 		t.Fatalf("final reply = %q, want %q", sent[0], want)
 	}
@@ -1255,7 +1255,7 @@ func TestProcessInteractiveEvents_AppendsContextIndicatorInsideReplyFooter(t *te
 	if len(sent) != 1 {
 		t.Fatalf("sent = %#v, want one final reply", sent)
 	}
-	want := "answer\n\n*[ctx: ~14%] · glm-5.1 · " + compactReplyFooterPath(workDir) + "*"
+	want := "answer\n\n*[ctx: ~14%] · glm-5.1 · " + compactReplyFooterPath(workDir) + " · s-footer-context*"
 	if sent[0] != want {
 		t.Fatalf("final reply = %q, want %q", sent[0], want)
 	}
@@ -1298,7 +1298,7 @@ func TestProcessInteractiveEvents_ToolSegmentsKeepFinalFooter(t *testing.T) {
 		t.Fatal("sent = nil, want final reply")
 	}
 	final := sent[len(sent)-1]
-	want := "已处理完成。\n\n*[ctx: ~14%] · glm-5.1 · " + compactReplyFooterPath(workDir) + "*"
+	want := "已处理完成。\n\n*[ctx: ~14%] · glm-5.1 · " + compactReplyFooterPath(workDir) + " · s-tool-footer*"
 	if final != want {
 		t.Fatalf("final reply = %q, want %q\nall sent = %#v", final, want, sent)
 	}
@@ -1470,7 +1470,7 @@ func TestProcessInteractiveEvents_ReplyFooterPrefersSessionRuntimeState(t *testi
 	if len(sent) != 1 {
 		t.Fatalf("sent = %#v, want one final reply", sent)
 	}
-	want := "answer\n\n*gpt-5.4 · xhigh · 31% left · " + compactReplyFooterPath(sessionWorkDir) + "*"
+	want := "answer\n\n*gpt-5.4 · xhigh · 31% left · " + compactReplyFooterPath(sessionWorkDir) + " · s-footer-runtime*"
 	if sent[0] != want {
 		t.Fatalf("final reply = %q, want %q", sent[0], want)
 	}
@@ -1509,6 +1509,63 @@ func TestProcessInteractiveEvents_SuppressesReplyFooterWhenOnlyWorkDir(t *testin
 	}
 	if sent[0] != "answer" {
 		t.Fatalf("final reply = %q, want plain answer without footer", sent[0])
+	}
+}
+
+func TestReplyFooterWorkDir_AppendsSessionID(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	tests := []struct {
+		name       string
+		session    AgentSession
+		agent      Agent
+		workspace  string
+		wantSuffix string
+	}{
+		{
+			name:       "both workdir and session ID",
+			session:    &controllableAgentSession{sessionID: "abc123", alive: true, events: make(chan Event, 1)},
+			agent:      &stubAgent{},
+			workspace:  homeDir,
+			wantSuffix: " · abc123",
+		},
+		{
+			name:       "only workdir, no session ID",
+			session:    &controllableAgentSession{sessionID: "", alive: true, events: make(chan Event, 1)},
+			agent:      &stubAgent{},
+			workspace:  homeDir,
+			wantSuffix: "",
+		},
+		{
+			name:       "nil session",
+			session:    nil,
+			agent:      &stubAgent{},
+			workspace:  homeDir,
+			wantSuffix: "",
+		},
+		{
+			name:       "no workdir, has session ID",
+			session:    &controllableAgentSession{sessionID: "abc123", alive: true, events: make(chan Event, 1)},
+			agent:      &stubAgent{},
+			workspace:  "",
+			wantSuffix: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := replyFooterWorkDir(tt.session, tt.agent, tt.workspace)
+			if tt.workspace == "" {
+				if got != "" {
+					t.Errorf("replyFooterWorkDir() = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.HasSuffix(got, tt.wantSuffix) {
+				t.Errorf("replyFooterWorkDir() = %q, want suffix %q", got, tt.wantSuffix)
+			}
+		})
 	}
 }
 
