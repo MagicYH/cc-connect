@@ -2366,6 +2366,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 			if len(noteElements) > 0 {
 				extractCardElements(noteElements, parts, d+1)
 			}
+			continue
 		case "action":
 			var actions []struct {
 				Text        json.RawMessage `json:"text"`
@@ -2381,6 +2382,7 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 					}
 				}
 			}
+			continue
 		case "collapsible_panel":
 			// Extract header title first (before children).
 			if len(elem.Property.Header) > 0 {

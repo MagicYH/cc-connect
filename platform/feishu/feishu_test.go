@@ -1276,6 +1276,11 @@ func TestExtractInteractiveCardText(t *testing.T) {
 			want:    "", // checked via strings.Contains below
 		},
 		{
+			name:    "schema2_note_with_property_elements_no_double_extract",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"note","property":{"elements":[{"tag":"plain_text","property":{"content":"Note text"}}]}}]}},"schema":"2.0"}`,
+			want:    "Note text",
+		},
+		{
 			name:    "legacy_mixed_alarm_card",
 			content: `{"header":{"title":{"content":"Mesh Alarm"}},"elements":[[{"tag":"column_set","columns":[{"tag":"column","elements":[{"tag":"markdown","content":"**PSM:**"}]},{"tag":"column","elements":[{"tag":"markdown","content":"my.service.psm"}]}]},{"tag":"column_set","columns":[{"tag":"column","elements":[{"tag":"markdown","content":"**Cluster:**"}]},{"tag":"column","elements":[{"tag":"markdown","content":"Asia-CIS:default"}]}]},{"tag":"div","fields":[{"text":{"tag":"lark_md","content":"**Region:** Asia-CIS"}},{"text":{"tag":"lark_md","content":"**Rule:** 入流量延迟 > 2000ms"}}]},{"tag":"note","elements":[{"tag":"lark_md","content":"⚠️ Alarm triggered at 2026-06-19 10:00:00"}]}]]}`,
 			want:    "Mesh Alarm\n**PSM:**\nmy.service.psm\n**Cluster:**\nAsia-CIS:default\n**Region:** Asia-CIS\n**Rule:** 入流量延迟 > 2000ms\n⚠️ Alarm triggered at 2026-06-19 10:00:00",
