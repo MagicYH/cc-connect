@@ -56,16 +56,60 @@ Single-step deployment. The change is a pure logic update in the Feishu platform
 ## Phase 2 · Release Runbook (v2)
 
 ### 2.1 Pre-Deploy Checklist
-> To be filled during finishing-a-development-branch Step 1.5.
+- [x] All 19 test cases in `TestExtractInteractiveCardText` pass
+- [x] `go build ./...` succeeds
+- [x] `go vet ./...` clean
+- [x] Race detector clean on `platform/feishu/` tests
+- [x] Full test suite `go test ./...` passes
+- [ ] PR merged to main
 
 ### 2.2 Executable Steps
-> To be filled during finishing-a-development-branch Step 1.5.
+
+#### Step 1: Build cc-connect binary
+**Execution:** AI-autonomous
+```bash
+cd /data00/home/chenhao.magic/Project/Source/Github/cc-connect
+make build
+```
+Expected: binary `cc-connect` produced in project root.
+
+#### Step 2: Deploy binary
+**Execution:** Human-assisted — deployment target and method depend on the user's infrastructure (direct binary replacement, systemd restart, container rebuild, etc.).
+```bash
+# Replace with actual deployment command, e.g.:
+# scp cc-connect <host>:/usr/local/bin/cc-connect
+# ssh <host> 'systemctl restart cc-connect'
+```
+Expected: cc-connect process running with updated binary.
 
 ### 2.3 Post-Deploy Verification
-> To be filled during finishing-a-development-branch Step 1.5.
+
+**Automated (run locally):**
+```bash
+go test ./platform/feishu/ -run TestExtractInteractiveCardText -v
+```
+Expected: 19/19 PASS. This covers S1–S12 from verification.md.
+
+**Manual smoke test (15min observation window):**
+1. Send a Feishu alarm card to the target group (or wait for a real alarm)
+2. Confirm the AI agent response includes detail fields (PSM, cluster, region) that were previously missing
+3. Verify existing card types (simple div/text cards) still produce correct output
+
+This covers S10 (user_dsl alarm card), S11 (mixed alarm card), and S13 (existing test regression).
 
 ### 2.4 Concrete Rollback Commands
-> To be filled during finishing-a-development-branch Step 1.5.
+```bash
+# Revert the feature commits (5 commits on shadow branch)
+git revert HEAD~5..HEAD --no-edit
+
+# Rebuild and redeploy
+make build
+# scp cc-connect <host>:/usr/local/bin/cc-connect
+# ssh <host> 'systemctl restart cc-connect'
+```
 
 ### 2.5 v1 Revisions Log
-> To be filled during finishing-a-development-branch Step 1.5.
+| Section | v1 description | v2 revision | Reason |
+|---|---|---|---|
+| 1.6 Observability | DIAG diagnostic code at lines 1096-1143 | No longer recommended for post-deploy spot-check — DIAG makes extra API calls per message; rely on manual smoke test instead | DIAG is debug-only code, not suitable for production observation |
+| 1.4 Risk Assessment R1 | "all 5 existing test cases must continue to pass" | Updated: 19 test cases now (5 original + 14 new) | Implementation added 14 new test cases covering all element types |
