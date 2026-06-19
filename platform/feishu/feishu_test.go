@@ -1228,6 +1228,31 @@ func TestExtractInteractiveCardText(t *testing.T) {
 			content: `{"elements":[[{"tag":"action","actions":[{"tag":"button","text":{"tag":"plain_text","content":"Acknowledge"}},{"tag":"select_static","placeholder":{"tag":"plain_text","content":"Select cluster"}}]}]]}`,
 			want:    "Acknowledge\nSelect cluster",
 		},
+		{
+			name:    "schema2_column_set",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"column_set","property":{"columns":[{"tag":"column","elements":[{"tag":"markdown","property":{"content":"**PSM:**"}}]},{"tag":"column","elements":[{"tag":"markdown","property":{"content":"my.service.psm"}}]}]}}]}},"schema":"2.0"}`,
+			want:    "**PSM:**\nmy.service.psm",
+		},
+		{
+			name:    "schema2_note_top_level_elements",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"note","elements":[{"tag":"plain_text","property":{"content":"Updated 3 minutes ago"}}]}]}},"schema":"2.0"}`,
+			want:    "Updated 3 minutes ago",
+		},
+		{
+			name:    "schema2_action_with_button_and_select",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"action","property":{"actions":[{"tag":"button","text":{"tag":"plain_text","content":"Acknowledge"}},{"tag":"select_static","placeholder":{"tag":"plain_text","content":"Select cluster"}}]}}]}},"schema":"2.0"}`,
+			want:    "Acknowledge\nSelect cluster",
+		},
+		{
+			name:    "schema2_collapsible_panel_header_before_children",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"collapsible_panel","property":{"header":{"title":{"tag":"plain_text","content":"Panel Title"}},"elements":[{"tag":"markdown","property":{"content":"Inner content"}}]}}]}},"schema":"2.0"}`,
+			want:    "Panel Title\nInner content",
+		},
+		{
+			name:    "schema2_div_with_property_fields",
+			content: `{"body":{"tag":"body","property":{"elements":[{"tag":"div","property":{"text":{"tag":"lark_md","content":"Header"},"fields":[{"text":{"tag":"lark_md","content":"**PSM:** svc.psm"}},{"text":"Plain string field"}]}}]}},"schema":"2.0"}`,
+			want:    "Header\n**PSM:** svc.psm\nPlain string field",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

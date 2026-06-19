@@ -2250,8 +2250,9 @@ func extractInteractiveCardText(content string) string {
 func extractCardElements(elements []json.RawMessage, parts *[]string) {
 	for _, raw := range elements {
 		var elem struct {
-			Tag      string `json:"tag"`
-			Content  string `json:"content"`
+			Tag      string            `json:"tag"`
+			Content  string            `json:"content"`
+			Elements []json.RawMessage `json:"elements"`
 			Property struct {
 				Content   string            `json:"content"`
 				Contents  json.RawMessage   `json:"contents"`
@@ -2262,6 +2263,9 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 				Columns   json.RawMessage   `json:"columns"`
 				Rows      json.RawMessage   `json:"rows"`
 				Behaviors json.RawMessage   `json:"behaviors"`
+				Actions   json.RawMessage   `json:"actions"`
+				Fields    json.RawMessage   `json:"fields"`
+				Header    json.RawMessage   `json:"header"`
 			} `json:"property"`
 		}
 		if json.Unmarshal(raw, &elem) != nil {
@@ -2337,6 +2341,52 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 			extractCardTable(elem.Property.Columns, elem.Property.Rows, parts)
 		case "list":
 			extractCardListItems(elem.Property.Items, parts)
+		case "column_set":
+			var columns []struct {
+				Elements []json.RawMessage `json:"elements"`
+			}
+			if json.Unmarshal(elem.Property.Columns, &columns) == nil {
+				for _, col := range columns {
+					extractCardElements(col.Elements, parts)
+				}
+			}
+		case "note":
+			noteElements := elem.Elements
+			if len(noteElements) == 0 {
+				noteElements = elem.Property.Elements
+			}
+			if len(noteElements) > 0 {
+				extractCardElements(noteElements, parts)
+			}
+		case "action":
+			var actions []struct {
+				Text        json.RawMessage `json:"text"`
+				Placeholder json.RawMessage `json:"placeholder"`
+			}
+			if json.Unmarshal(elem.Property.Actions, &actions) == nil {
+				for _, a := range actions {
+					if len(a.Text) > 0 {
+						*parts = append(*parts, extractTextValue(a.Text)...)
+					}
+					if len(a.Placeholder) > 0 {
+						*parts = append(*parts, extractTextValue(a.Placeholder)...)
+					}
+				}
+			}
+		case "collapsible_panel":
+			// Extract header title first (before children).
+			if len(elem.Property.Header) > 0 {
+				var header struct {
+					Title json.RawMessage `json:"title"`
+				}
+				if json.Unmarshal(elem.Property.Header, &header) == nil && len(header.Title) > 0 {
+					*parts = append(*parts, extractTextValue(header.Title)...)
+				}
+			}
+			if len(elem.Property.Elements) > 0 {
+				extractCardElements(elem.Property.Elements, parts)
+			}
+			continue
 		default:
 			content := elem.Property.Content
 			if content == "" {
@@ -2346,13 +2396,17 @@ func extractCardElements(elements []json.RawMessage, parts *[]string) {
 				*parts = append(*parts, content)
 			}
 			if len(elem.Property.Text) > 0 {
-				var textElem struct {
-					Property struct {
-						Content string `json:"content"`
-					} `json:"property"`
+				*parts = append(*parts, extractTextValue(elem.Property.Text)...)
+			}
+			// Extract property.fields (key-value pairs in div elements).
+			if len(elem.Property.Fields) > 0 {
+				var fields []struct {
+					Text json.RawMessage `json:"text"`
 				}
-				if json.Unmarshal(elem.Property.Text, &textElem) == nil && textElem.Property.Content != "" {
-					*parts = append(*parts, textElem.Property.Content)
+				if json.Unmarshal(elem.Property.Fields, &fields) == nil {
+					for _, f := range fields {
+						*parts = append(*parts, extractTextValue(f.Text)...)
+					}
 				}
 			}
 		}
