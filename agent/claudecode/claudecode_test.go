@@ -968,3 +968,84 @@ func TestValidateSessionID_WorkDirHint(t *testing.T) {
 		t.Error("validateSessionIDInProject with workDirHint failed to find session")
 	}
 }
+
+// TestValidateSessionIDInProject_SymlinkedHomeDir is the regression test for
+// the /stop-loses-session bug on systems where $HOME is a symlink (e.g.
+// /home/user → /data00/home/user). Claude Code resolves symlinks before
+// deriving the project directory key, so if cc-connect doesn't do the same,
+// findProjectDir generates the wrong key and ValidateSessionID always fails —
+// causing every message to start a fresh session instead of resuming.
+func TestValidateSessionIDInProject_SymlinkedHomeDir(t *testing.T) {
+	// Real location: /tmp/real/home/user/project
+	realBase := t.TempDir()
+	realHome := filepath.Join(realBase, "data00", "home", "user")
+	if err := os.MkdirAll(realHome, 0o755); err != nil {
+		t.Fatalf("create real home: %v", err)
+	}
+
+	// Symlink: /tmp/xxx/linkhome/user → realHome
+	linkBase := t.TempDir()
+	linkHome := filepath.Join(linkBase, "home", "user")
+	if err := os.MkdirAll(filepath.Dir(linkHome), 0o755); err != nil {
+		t.Fatalf("create link parent: %v", err)
+	}
+	if err := os.Symlink(realHome, linkHome); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	// workDir goes through the symlink (as configured in config.toml)
+	workDir := filepath.Join(linkHome, "project")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create workDir: %v", err)
+	}
+
+	// Claude Code resolves symlinks, so the project key is derived from the
+	// real path, not the symlink path.
+	realWorkDir := filepath.Join(realHome, "project")
+	projectKey := encodeClaudeProjectKey(realWorkDir)
+	projectDir := filepath.Join(realHome, ".claude", "projects", projectKey)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+
+	sessionID := "abc123-symlink-test"
+	if err := os.WriteFile(filepath.Join(projectDir, sessionID+".jsonl"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	// Validate using the symlinked workDir — must resolve symlinks internally.
+	if !validateSessionIDInProject(realHome, workDir, sessionID) {
+		t.Errorf("validateSessionIDInProject(%q, %q) = false, want true (symlinked HOME)", workDir, sessionID)
+	}
+}
+
+// TestFindProjectDir_SymlinkedPath verifies that findProjectDir resolves
+// symlinks in the workDir before encoding the project key.
+func TestFindProjectDir_SymlinkedPath(t *testing.T) {
+	homeDir := t.TempDir()
+
+	// Real location
+	realWorkDir := filepath.Join(homeDir, "data00", "project")
+	if err := os.MkdirAll(realWorkDir, 0o755); err != nil {
+		t.Fatalf("create real workDir: %v", err)
+	}
+
+	// Create the project dir using the real (resolved) path
+	projectKey := encodeClaudeProjectKey(realWorkDir)
+	projectDir := filepath.Join(homeDir, ".claude", "projects", projectKey)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+
+	// Symlink: /tmp/xxx/linkproject → realWorkDir
+	linkWorkDir := filepath.Join(homeDir, "linkproject")
+	if err := os.Symlink(realWorkDir, linkWorkDir); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	// findProjectDir with symlinked path must resolve to the real project dir
+	got := findProjectDir(homeDir, linkWorkDir)
+	if got != projectDir {
+		t.Errorf("findProjectDir(%q) = %q, want %q", linkWorkDir, got, projectDir)
+	}
+}

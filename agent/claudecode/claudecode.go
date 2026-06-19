@@ -539,6 +539,10 @@ func validateSessionIDInProject(homeDir, workDir, sessionID string) bool {
 	if err != nil {
 		return false
 	}
+	// Resolve symlinks so encoding matches Claude Code's actual project dir.
+	if evaluated, err := filepath.EvalSymlinks(absWorkDir); err == nil {
+		absWorkDir = evaluated
+	}
 	// Direct match: check the project dir for workDir itself.
 	projectDir := findProjectDir(homeDir, absWorkDir)
 	if projectDir != "" {
@@ -1584,6 +1588,15 @@ func encodeClaudeProjectKey(absPath string) string {
 // scanning the projects directory.
 func findProjectDir(homeDir, absWorkDir string) string {
 	projectsBase := filepath.Join(homeDir, ".claude", "projects")
+
+	// Resolve symlinks so the encoded key matches what Claude Code actually
+	// uses for the project directory. Claude Code resolves symlinks in its
+	// work_dir before deriving the project key; if we don't do the same,
+	// paths through symlinked HOME dirs (e.g. /home/user → /data00/home/user)
+	// produce wrong keys and the project directory is never found.
+	if evaluated, err := filepath.EvalSymlinks(absWorkDir); err == nil {
+		absWorkDir = evaluated
+	}
 
 	// Build candidate keys: different ways Claude Code might encode the path.
 	// Primary encoding: Claude Code's actual algorithm (non-ASCII → "-")
