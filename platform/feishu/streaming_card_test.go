@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -200,5 +201,224 @@ func TestRenderThinkingContent(t *testing.T) {
 	}
 	if got := renderThinkingContent(core.SlotContent{ThinkingText: "Analyzing..."}); !strings.Contains(got, "Analyzing") {
 		t.Errorf("non-empty thinking should contain text, got %q", got)
+	}
+}
+
+func TestBuildStreamingCardSkeleton(t *testing.T) {
+	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "")
+	var card map[string]any
+	if err := json.Unmarshal([]byte(raw), &card); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	// Schema
+	if card["schema"] != "2.0" {
+		t.Errorf("expected schema 2.0, got %v", card["schema"])
+	}
+
+	// Config
+	cfg, _ := card["config"].(map[string]any)
+	if cfg["streaming_mode"] != true {
+		t.Error("expected streaming_mode true")
+	}
+	if cfg["update_multi"] != true {
+		t.Error("expected update_multi true")
+	}
+
+	// Header: thinking status → blue
+	hdr, _ := card["header"].(map[string]any)
+	if hdr["template"] != "blue" {
+		t.Errorf("expected blue template for thinking, got %v", hdr["template"])
+	}
+
+	// Collect all element_ids in body order
+	body, _ := card["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
+	var ids []string
+	for _, e := range elems {
+		em, _ := e.(map[string]any)
+		if id, ok := em["element_id"]; ok {
+			ids = append(ids, id.(string))
+		}
+		// Also check nested elements inside collapsible_panel
+		if nested, ok := em["elements"]; ok {
+			for _, n := range nested.([]any) {
+				nm, _ := n.(map[string]any)
+				if id, ok := nm["element_id"]; ok {
+					ids = append(ids, id.(string))
+				}
+			}
+		}
+	}
+
+	// Required element_ids must be present
+	required := []string{
+		streamingElementStatusBanner,
+		streamingElementToolsMd,
+		streamingElementMainText,
+		streamingElementFooterNote,
+	}
+	for _, req := range required {
+		found := false
+		for _, id := range ids {
+			if id == req {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing required element_id %q in card; found: %v", req, ids)
+		}
+	}
+
+	// thinking_panel must be ABSENT when thinkingText is empty
+	for _, id := range ids {
+		if id == streamingElementThinkingPanel || id == streamingElementThinkingMd {
+			t.Errorf("thinking panel element_id %q should not be present when thinkingText is empty", id)
+		}
+	}
+
+	// Tools panel must be collapsed
+	for _, e := range elems {
+		em, _ := e.(map[string]any)
+		if em["tag"] == "collapsible_panel" && em["element_id"] == streamingElementToolsPanel {
+			if em["expanded"] == true {
+				t.Error("tools panel should start collapsed")
+			}
+		}
+	}
+}
+
+func TestBuildStreamingCardSkeletonWithThinking(t *testing.T) {
+	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "Analyzing code...")
+	var card map[string]any
+	if err := json.Unmarshal([]byte(raw), &card); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	body, _ := card["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
+
+	// Collect all element_ids including nested
+	var ids []string
+	var thinkingPanel map[string]any
+	for _, e := range elems {
+		em, _ := e.(map[string]any)
+		if id, ok := em["element_id"]; ok {
+			ids = append(ids, id.(string))
+		}
+		if em["tag"] == "collapsible_panel" && em["element_id"] == streamingElementThinkingPanel {
+			thinkingPanel = em
+		}
+		if nested, ok := em["elements"]; ok {
+			for _, n := range nested.([]any) {
+				nm, _ := n.(map[string]any)
+				if id, ok := nm["element_id"]; ok {
+					ids = append(ids, id.(string))
+				}
+			}
+		}
+	}
+
+	// thinking_panel and thinking_md must be present
+	foundPanel := false
+	foundMd := false
+	for _, id := range ids {
+		if id == streamingElementThinkingPanel {
+			foundPanel = true
+		}
+		if id == streamingElementThinkingMd {
+			foundMd = true
+		}
+	}
+	if !foundPanel {
+		t.Error("thinking_panel element_id should be present when thinkingText is non-empty")
+	}
+	if !foundMd {
+		t.Error("thinking_md element_id should be present when thinkingText is non-empty")
+	}
+
+	// Thinking panel must be expanded
+	if thinkingPanel != nil && thinkingPanel["expanded"] != true {
+		t.Error("thinking panel should be expanded when thinkingText is non-empty")
+	}
+
+	// Header should be blue for thinking status
+	hdr, _ := card["header"].(map[string]any)
+	if hdr["template"] != "blue" {
+		t.Errorf("expected blue template for thinking, got %v", hdr["template"])
+	}
+
+	// Verify done status uses green
+	rawDone := buildStreamingCardSkeleton(core.CardStatusDone, "")
+	var cardDone map[string]any
+	if err := json.Unmarshal([]byte(rawDone), &cardDone); err != nil {
+		t.Fatalf("invalid JSON for done card: %v", err)
+	}
+	hdrDone, _ := cardDone["header"].(map[string]any)
+	if hdrDone["template"] != "green" {
+		t.Errorf("expected green template for done, got %v", hdrDone["template"])
+	}
+
+	// Verify error status uses red
+	rawErr := buildStreamingCardSkeleton(core.CardStatusError, "")
+	var cardErr map[string]any
+	if err := json.Unmarshal([]byte(rawErr), &cardErr); err != nil {
+		t.Fatalf("invalid JSON for error card: %v", err)
+	}
+	hdrErr, _ := cardErr["header"].(map[string]any)
+	if hdrErr["template"] != "red" {
+		t.Errorf("expected red template for error, got %v", hdrErr["template"])
+	}
+}
+
+func TestStreamSlotContentRoutesToSlotAPI(t *testing.T) {
+	// Verify each StreamingSlotID maps to the correct element_id.
+	tests := []struct {
+		slot core.StreamingSlotID
+		want string
+	}{
+		{core.SlotStatusBanner, streamingElementStatusBanner},
+		{core.SlotThinking, streamingElementThinkingMd},
+		{core.SlotTools, streamingElementToolsMd},
+		{core.SlotMainText, streamingElementMainText},
+		{core.SlotFooterNote, streamingElementFooterNote},
+	}
+	for _, tt := range tests {
+		got := resolveSlotElementID(tt.slot)
+		if got != tt.want {
+			t.Errorf("resolveSlotElementID(%q) = %q, want %q", tt.slot, got, tt.want)
+		}
+	}
+
+	// Verify renderSlotContent routes correctly for each slot.
+	// SlotStatusBanner → renderStatusBanner
+	banner := renderSlotContent(core.SlotStatusBanner, core.SlotContent{Phase: core.PhaseThinking})
+	if banner == "" {
+		t.Error("renderSlotContent for SlotStatusBanner should produce non-empty output")
+	}
+
+	// SlotThinking → renderThinkingContent
+	think := renderSlotContent(core.SlotThinking, core.SlotContent{ThinkingText: "Hello"})
+	if think != "Hello" {
+		t.Errorf("renderSlotContent for SlotThinking = %q, want %q", think, "Hello")
+	}
+
+	// SlotTools → renderToolsTimeline (empty steps → empty string)
+	tools := renderSlotContent(core.SlotTools, core.SlotContent{ToolSteps: nil})
+	if tools != "" {
+		t.Errorf("renderSlotContent for SlotTools with empty steps = %q, want empty", tools)
+	}
+
+	// SlotMainText → content.MainText
+	main := renderSlotContent(core.SlotMainText, core.SlotContent{MainText: "body text"})
+	if main != "body text" {
+		t.Errorf("renderSlotContent for SlotMainText = %q, want %q", main, "body text")
+	}
+
+	// SlotFooterNote → content.StatusFooter
+	foot := renderSlotContent(core.SlotFooterNote, core.SlotContent{StatusFooter: "elapsed 5s"})
+	if foot != "elapsed 5s" {
+		t.Errorf("renderSlotContent for SlotFooterNote = %q, want %q", foot, "elapsed 5s")
 	}
 }
