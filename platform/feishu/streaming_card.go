@@ -3,6 +3,7 @@ package feishu
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -138,7 +139,7 @@ func renderToolsTimeline(c core.SlotContent) string {
 	return md
 }
 
-// renderThinkingContent returns the thinking text, or empty string if none (panel hidden).
+// renderThinkingContent returns the thinking text for the thinking slot, or empty string if none.
 func renderThinkingContent(c core.SlotContent) string {
 	return c.ThinkingText
 }
@@ -262,7 +263,11 @@ func buildStreamingCardSkeleton(status core.CardStatus, thinkingText string) str
 		"body": map[string]any{"elements": elements},
 	}
 
-	b, _ := json.Marshal(card)
+	b, err := json.Marshal(card)
+	if err != nil {
+		slog.Error("feishu: marshal streaming card skeleton", "error", err)
+		return "{}"
+	}
 	return string(b)
 }
 
@@ -281,6 +286,7 @@ func resolveSlotElementID(slot core.StreamingSlotID) string {
 	case core.SlotFooterNote:
 		return streamingElementFooterNote
 	default:
+		slog.Warn("feishu: unknown StreamingSlotID", "slot", slot)
 		return ""
 	}
 }
