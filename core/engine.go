@@ -52,6 +52,25 @@ func previewText(s string, maxRunes int) string {
 	return out
 }
 
+// derivePhase determines the current streaming phase from tool steps and text state.
+// Priority: tooling > thinking > streaming > done.
+func derivePhase(toolSteps []ToolStep, hasTextContent bool) StreamingPhase {
+	for _, s := range toolSteps {
+		if s.Kind == ToolStepKindTool && !s.Done {
+			return PhaseTooling
+		}
+	}
+	for _, s := range toolSteps {
+		if s.Kind == ToolStepKindThinking {
+			return PhaseThinking
+		}
+	}
+	if hasTextContent {
+		return PhaseStreaming
+	}
+	return PhaseDone
+}
+
 const (
 	defaultThinkingMaxLen = 300
 	defaultToolMaxLen     = 500

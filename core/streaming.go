@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -63,14 +64,16 @@ const (
 
 // ToolStep is one summarized progress row shown in rich progress cards.
 type ToolStep struct {
-	Kind     ToolStepKind // progress row kind; empty means tool for backward compatibility
-	Name     string       // tool name (e.g. "Bash", "Edit")
-	Summary  string       // human-readable summary shown in the card
-	Result   string       // optional tool output/result summary
-	Status   string       // optional tool status (e.g. completed/failed)
-	ExitCode *int         // optional process exit code
-	Success  *bool        // optional success flag
-	Done     bool         // true once a tool result has been observed
+	Kind      ToolStepKind  // progress row kind; empty means tool for backward compatibility
+	Name      string        // tool name (e.g. "Bash", "Edit")
+	Summary   string        // human-readable summary shown in the card
+	Result    string        // optional tool output/result summary
+	Status    string        // optional tool status (e.g. completed/failed)
+	ExitCode  *int          // optional process exit code
+	Success   *bool         // optional success flag
+	Done      bool          // true once a tool result has been observed
+	Duration  time.Duration // elapsed time (computed from startedAt on EventToolResult)
+	startedAt time.Time     // internal: set on EventToolUse, used to compute Duration
 }
 
 // RichCardSupporter is an optional interface for platforms that can build
@@ -121,6 +124,88 @@ type RichCardTextStreamer interface {
 	// implementation is responsible for serializing concurrent calls and
 	// maintaining a monotonic sequence counter per handle.
 	StreamRichCardText(ctx context.Context, previewHandle any, fullText string) error
+}
+
+// StreamingSlotID identifies an independently patchable slot in a streaming card.
+type StreamingSlotID string
+
+const (
+	SlotStatusBanner StreamingSlotID = "status_banner"
+	SlotThinking     StreamingSlotID = "thinking_md"
+	SlotTools        StreamingSlotID = "tools_md"
+	SlotMainText     StreamingSlotID = "main_text"
+	SlotFooterNote   StreamingSlotID = "footer_note"
+)
+
+// StreamingPhase represents the current phase of a streaming session.
+type StreamingPhase string
+
+const (
+	PhaseTooling   StreamingPhase = "tooling"
+	PhaseThinking  StreamingPhase = "thinking"
+	PhaseStreaming StreamingPhase = "streaming"
+	PhaseDone      StreamingPhase = "done"
+)
+
+// Sentinel errors for slot-level streaming operations.
+var (
+	ErrSlotRateLimited   = errors.New("slot update rate limited")
+	ErrSlotNotSupported  = errors.New("slot update not supported (no cardEntity)")
+	ErrSlotInvalidHandle = errors.New("invalid streaming card handle")
+)
+
+// SlotContent carries structured data for a slot update. Only a subset of fields
+// are populated per slot; see the StreamingSlotID constants for the field mapping:
+//   - SlotStatusBanner: Phase, Elapsed, ActiveTool, ToolSummary
+//   - SlotThinking: ThinkingText
+//   - SlotTools: ToolSteps
+//   - SlotMainText: MainText
+//   - SlotFooterNote: StatusFooter
+type SlotContent struct {
+	// StatusBanner fields
+	Phase       StreamingPhase // "thinking" | "tooling" | "streaming" | "done"
+	Elapsed     time.Duration
+	ActiveTool  string // active tool name (for tooling phase)
+	ToolSummary string // active tool input summary (for tooling phase)
+
+	// ToolsTimeline fields
+	ToolSteps []ToolStep
+
+	// ThinkingContent fields
+	ThinkingText string
+
+	// MainText fields (used for SlotMainText)
+	MainText string
+
+	// FooterNote fields
+	StatusFooter string
+}
+
+// StreamingRichCardSupporter is an optional interface for platforms that support
+// multi-slot streaming card updates. It does NOT embed RichCardSupporter — they
+// are independent interfaces. The engine checks StreamingRichCardSupporter first;
+// if unavailable, it falls back to RichCardSupporter.
+type StreamingRichCardSupporter interface {
+	// BuildStreamingCard creates the initial multi-slot card skeleton, sends it
+	// via the platform's PreviewStarter, and returns an opaque handle.
+	// Returns ErrSlotNotSupported if cardEntity creation fails (engine falls back
+	// to RichCardSupporter path).
+	BuildStreamingCard(ctx context.Context, chatID string, status CardStatus, title string) (handle any, err error)
+
+	// StreamSlotContent patches a single slot's markdown via cardElement.content().
+	// The engine passes structured data via SlotContent; the platform renders it
+	// into platform-specific markdown internally.
+	// Returns ErrSlotRateLimited on rate limit (engine triggers degradation).
+	// Returns ErrSlotNotSupported if cardEntity is unavailable.
+	StreamSlotContent(ctx context.Context, handle any, slot StreamingSlotID, content SlotContent) error
+
+	// FinalizeStreamingCard disables streaming mode, rebuilds the card as a
+	// terminal (completed) card, and patches all slots to their terminal content
+	// before switching the header to terminal status. Two-phase:
+	//   Phase 1: Patch all slots to terminal content (still in streaming mode)
+	//   Phase 2: Disable streaming mode + rebuild full card with completed layout + set header
+	// If Phase 2 fails, the card content is still correct even if header shows wrong color.
+	FinalizeStreamingCard(ctx context.Context, handle any, steps []ToolStep, markdown string, status CardStatus, statusFooter string) error
 }
 
 // PreviewStarter is an optional interface for platforms that can initiate a

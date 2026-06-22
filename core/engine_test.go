@@ -15324,3 +15324,75 @@ func TestAgentSystemPrompt_DocumentsAudioVideoFlags(t *testing.T) {
 		t.Error("AgentSystemPrompt missing the 'Do NOT downgrade' anti-regression line")
 	}
 }
+
+func TestDerivePhase(t *testing.T) {
+	tests := []struct {
+		name           string
+		toolSteps      []ToolStep
+		hasTextContent bool
+		want           StreamingPhase
+	}{
+		{
+			name:           "no activity yields done",
+			toolSteps:      nil,
+			hasTextContent: false,
+			want:           PhaseDone,
+		},
+		{
+			name:           "thinking steps only yields thinking",
+			toolSteps:      []ToolStep{{Kind: ToolStepKindThinking, Done: true}},
+			hasTextContent: false,
+			want:           PhaseThinking,
+		},
+		{
+			name:           "running tool yields tooling",
+			toolSteps:      []ToolStep{{Kind: ToolStepKindTool, Done: false, Name: "Read"}},
+			hasTextContent: false,
+			want:           PhaseTooling,
+		},
+		{
+			name:           "completed tools with text yields streaming",
+			toolSteps:      []ToolStep{{Kind: ToolStepKindTool, Done: true, Name: "Read"}},
+			hasTextContent: true,
+			want:           PhaseStreaming,
+		},
+		{
+			name:           "text only yields streaming",
+			toolSteps:      nil,
+			hasTextContent: true,
+			want:           PhaseStreaming,
+		},
+		{
+			name: "running tool takes priority over text",
+			toolSteps: []ToolStep{
+				{Kind: ToolStepKindTool, Done: false, Name: "Bash"},
+				{Kind: ToolStepKindTool, Done: true, Name: "Read"},
+			},
+			hasTextContent: true,
+			want:           PhaseTooling,
+		},
+		{
+			name: "running tool takes priority over thinking",
+			toolSteps: []ToolStep{
+				{Kind: ToolStepKindThinking, Done: true},
+				{Kind: ToolStepKindTool, Done: false, Name: "Bash"},
+			},
+			hasTextContent: false,
+			want:           PhaseTooling,
+		},
+		{
+			name:           "completed tools without text yields done",
+			toolSteps:      []ToolStep{{Kind: ToolStepKindTool, Done: true, Name: "Read"}},
+			hasTextContent: false,
+			want:           PhaseDone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := derivePhase(tt.toolSteps, tt.hasTextContent)
+			if got != tt.want {
+				t.Errorf("derivePhase() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
