@@ -48,6 +48,12 @@ func TestRenderStatusBanner(t *testing.T) {
 			want:    []string{"🔧", "**工具调用中**", "`Read`", "5.0s"},
 		},
 		{
+			name:    "tooling phase without active tool",
+			content: core.SlotContent{Phase: core.PhaseTooling, Elapsed: 3 * time.Second},
+			want:    []string{"🔧", "**工具调用中**", "3.0s"},
+			dont:    []string{"`"},
+		},
+		{
 			name:    "streaming phase",
 			content: core.SlotContent{Phase: core.PhaseStreaming, Elapsed: 15 * time.Second},
 			want:    []string{"✍️", "**生成中**", "15.0s"},
@@ -103,6 +109,23 @@ func TestRenderToolsTimeline(t *testing.T) {
 			}},
 			want: []string{"出错", "`Run command`"}, // buildToolDisplay maps "Bash" → "Run command"
 		},
+		{
+			name: "mixed running and completed tools",
+			content: core.SlotContent{ToolSteps: []core.ToolStep{
+				{Kind: core.ToolStepKindTool, Name: "Read", Summary: "path: a.go", Status: "complete", Done: true, Duration: time.Second},
+				{Kind: core.ToolStepKindTool, Name: "Bash", Summary: "cmd: test", Status: "running", Done: false, Duration: 2 * time.Second},
+			}},
+			want: []string{"运行", "完成", "`Run command`", "`Read`"},
+		},
+		{
+			name: "thinking steps filtered out",
+			content: core.SlotContent{ToolSteps: []core.ToolStep{
+				{Kind: core.ToolStepKindThinking, Name: "thinking", Status: "complete", Done: true, Duration: time.Second},
+				{Kind: core.ToolStepKindTool, Name: "Read", Summary: "path: a.go", Status: "complete", Done: true, Duration: time.Second},
+			}},
+			want: []string{"`Read`"},
+			dont: []string{"thinking"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,6 +152,24 @@ func TestRenderToolsTimelineResultTruncation(t *testing.T) {
 	got := renderToolsTimeline(content)
 	if strings.Contains(got, strings.Repeat("x", 121)) {
 		t.Errorf("result should be truncated to 120 chars")
+	}
+}
+
+func TestRenderToolsTimelineCJKTruncation(t *testing.T) {
+	// Each CJK char is 3 bytes; byte-based truncation would split mid-rune.
+	longResult := strings.Repeat("中", 200) // 600 bytes, 200 runes
+	content := core.SlotContent{ToolSteps: []core.ToolStep{
+		{Kind: core.ToolStepKindTool, Name: "Read", Status: "complete", Done: true, Result: longResult, Duration: time.Second},
+	}}
+	got := renderToolsTimeline(content)
+	// Should have 120 CJK chars + "…", not garbled bytes
+	if !strings.Contains(got, "…") {
+		t.Errorf("CJK result should be truncated with ellipsis")
+	}
+	// 120 CJK chars = 360 bytes; verify no more than 120 runes of original
+	visible := strings.Repeat("中", 121)
+	if strings.Contains(got, visible) {
+		t.Errorf("CJK result should be truncated to 120 runes, got more")
 	}
 }
 

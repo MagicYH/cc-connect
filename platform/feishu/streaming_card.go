@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chenhg5/cc-connect/core"
 )
@@ -50,10 +51,10 @@ func renderStatusBanner(c core.SlotContent) string {
 }
 
 const (
-	maxVisibleTools    = 8
-	maxToolResultLen   = 120
-	maxToolsMDSize     = 4096
-	overflowMsg        = "... 另有 %d 条工具记录已收起"
+	maxVisibleTools  = 8
+	maxToolResultLen = 120
+	maxToolsMDSize   = 4096
+	overflowMsg      = "另有 %d 条工具记录已收起"
 )
 
 // renderToolsTimeline produces a tools timeline markdown for a streaming card slot.
@@ -69,6 +70,9 @@ func renderToolsTimeline(c core.SlotContent) string {
 	var running, completed []core.ToolStep
 	for i := len(c.ToolSteps) - 1; i >= 0; i-- {
 		s := c.ToolSteps[i]
+		if s.Kind == core.ToolStepKindThinking {
+			continue
+		}
 		if !s.Done {
 			running = append(running, s)
 		} else {
@@ -77,7 +81,7 @@ func renderToolsTimeline(c core.SlotContent) string {
 	}
 
 	// Merge: running first, then completed
-	ordered := append(ringClamp(running, maxVisibleTools), completed...)
+	ordered := append(running[:min(len(running), maxVisibleTools)], completed...)
 
 	var sb strings.Builder
 	visible := 0
@@ -104,10 +108,10 @@ func renderToolsTimeline(c core.SlotContent) string {
 
 		if step.Done && step.Result != "" {
 			result := step.Result
-			if len(result) > maxToolResultLen {
-				result = result[:maxToolResultLen] + "…"
+			if len([]rune(result)) > maxToolResultLen {
+				result = string([]rune(result)[:maxToolResultLen]) + "…"
 			}
-			sb.WriteString(fmt.Sprintf("  ↳ <font color='grey'>结果</font> `%s` %s\n", display.Title, result))
+			sb.WriteString(fmt.Sprintf("  ↳ <font color='grey'>结果</font> %s\n", result))
 		}
 	}
 
@@ -121,20 +125,16 @@ func renderToolsTimeline(c core.SlotContent) string {
 	// Trim trailing newline
 	md = strings.TrimRight(md, "\n")
 
-	// Cap at maxToolsMDSize bytes
+	// Cap at maxToolsMDSize bytes, truncating at a valid UTF-8 boundary
 	if len(md) > maxToolsMDSize {
-		md = md[:maxToolsMDSize]
+		end := maxToolsMDSize
+		for end > 0 && !utf8.RuneStart(md[end]) {
+			end--
+		}
+		md = md[:end]
 	}
 
 	return md
-}
-
-// ringClamp returns at most n entries from src.
-func ringClamp(src []core.ToolStep, n int) []core.ToolStep {
-	if len(src) <= n {
-		return src
-	}
-	return src[:n]
 }
 
 // renderThinkingContent returns the thinking text, or empty string if none (panel hidden).
