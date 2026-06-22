@@ -1,14 +1,19 @@
 package feishu
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/chenhg5/cc-connect/core"
+	lark "github.com/larksuite/oapi-sdk-go/v3"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 )
 
 // formatDuration produces a human-friendly elapsed-time string.
@@ -307,4 +312,64 @@ func renderSlotContent(slot core.StreamingSlotID, content core.SlotContent) stri
 	default:
 		return ""
 	}
+}
+
+// StreamSlotContent patches a single slot's markdown via cardElement.content().
+// Returns ErrSlotRateLimited on rate limit (engine triggers degradation).
+// Returns ErrSlotNotSupported if cardEntity is unavailable.
+func (p *Platform) StreamSlotContent(ctx context.Context, previewHandle any, slot core.StreamingSlotID, content core.SlotContent) error {
+	h, ok := previewHandle.(*feishuPreviewHandle)
+	if !ok {
+		return fmt.Errorf("%s: StreamSlotContent: %w", p.tag(), core.ErrSlotInvalidHandle)
+	}
+
+	h.mu.Lock()
+	if h.cardID == "" {
+		h.mu.Unlock()
+		return core.ErrSlotNotSupported
+	}
+	h.sequence++
+	cardID := h.cardID
+	seq := h.sequence
+	h.mu.Unlock()
+
+	elementID := resolveSlotElementID(slot)
+	if elementID == "" {
+		return fmt.Errorf("%s: StreamSlotContent: unknown slot %q", p.tag(), slot)
+	}
+	markdown := renderSlotContent(slot, content)
+
+	apiPath := fmt.Sprintf("/open-apis/cardkit/v1/cards/%s/elements/%s/content", cardID, elementID)
+	body := map[string]any{
+		"content":  markdown,
+		"sequence": seq,
+	}
+
+	var apiResp *larkcore.ApiResp
+	if err := p.withFreshTenantAccessTokenRetry(ctx, "stream slot content", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+		var err error
+		apiResp, err = client.Put(ctx, apiPath, body, larkcore.AccessTokenTypeTenant, options...)
+		return err
+	}); err != nil {
+		return fmt.Errorf("%s: stream slot content: %w", p.tag(), err)
+	}
+	if apiResp == nil || apiResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: stream slot content: HTTP status %d", p.tag(), apiResp.StatusCode)
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(apiResp.RawBody, &resp); err != nil {
+		return fmt.Errorf("%s: stream slot content: parse response: %w", p.tag(), err)
+	}
+	if resp.Code != 0 {
+		err := classifyFeishuCardAPIError("stream slot content", resp.Code, resp.Msg)
+		if errors.Is(err, errFeishuCardRateLimited) {
+			slog.Debug(p.tag()+": stream slot content rate limited; skipping frame", "slot", slot, "code", resp.Code)
+			return core.ErrSlotRateLimited
+		}
+		return fmt.Errorf("%s: stream slot content: %w", p.tag(), err)
+	}
+	return nil
 }
