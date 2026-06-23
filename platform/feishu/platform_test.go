@@ -1133,7 +1133,7 @@ func TestBuildRichCard_RendersThinkingAndToolResultRows(t *testing.T) {
 		},
 	}, "done", true, "")
 
-	for _, want := range []string{"Inspecting event routing", "echo hi", "completed", "exit: 0", "hi"} {
+	for _, want := range []string{"Inspecting event routing", "echo hi", "完成", "hi"} {
 		if !strings.Contains(cardJSON, want) {
 			t.Fatalf("rich card should contain %q, got %q", want, cardJSON)
 		}
@@ -1980,7 +1980,6 @@ func TestCardAction_NavSlow_NilCard_NoRefresh(t *testing.T) {
 			Context:  &callback.Context{OpenChatID: "oc_test_chat", OpenMessageID: "om_test_message"},
 		},
 	})
-
 	if err != nil {
 		t.Fatalf("onCardAction() error = %v", err)
 	}

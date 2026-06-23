@@ -146,31 +146,31 @@ func TestRenderToolsTimeline(t *testing.T) {
 }
 
 func TestRenderToolsTimelineResultTruncation(t *testing.T) {
-	longResult := strings.Repeat("x", 200)
+	longResult := strings.Repeat("x", 500)
 	content := core.SlotContent{ToolSteps: []core.ToolStep{
 		{Kind: core.ToolStepKindTool, Name: "Bash", Status: "complete", Done: true, Result: longResult, Duration: time.Second},
 	}}
 	got := renderToolsTimeline(content)
-	if strings.Contains(got, strings.Repeat("x", 121)) {
-		t.Errorf("result should be truncated to 120 chars")
+	if strings.Contains(got, strings.Repeat("x", 301)) {
+		t.Errorf("result should be truncated to 300 chars")
 	}
 }
 
 func TestRenderToolsTimelineCJKTruncation(t *testing.T) {
 	// Each CJK char is 3 bytes; byte-based truncation would split mid-rune.
-	longResult := strings.Repeat("中", 200) // 600 bytes, 200 runes
+	longResult := strings.Repeat("中", 500) // 1500 bytes, 500 runes
 	content := core.SlotContent{ToolSteps: []core.ToolStep{
 		{Kind: core.ToolStepKindTool, Name: "Read", Status: "complete", Done: true, Result: longResult, Duration: time.Second},
 	}}
 	got := renderToolsTimeline(content)
-	// Should have 120 CJK chars + "…", not garbled bytes
+	// Should have 300 CJK chars + "…", not garbled bytes
 	if !strings.Contains(got, "…") {
 		t.Errorf("CJK result should be truncated with ellipsis")
 	}
-	// 120 CJK chars = 360 bytes; verify no more than 120 runes of original
-	visible := strings.Repeat("中", 121)
+	// 300 CJK chars = 900 bytes; verify no more than 300 runes of original
+	visible := strings.Repeat("中", 301)
 	if strings.Contains(got, visible) {
-		t.Errorf("CJK result should be truncated to 120 runes, got more")
+		t.Errorf("CJK result should be truncated to 300 runes, got more")
 	}
 }
 

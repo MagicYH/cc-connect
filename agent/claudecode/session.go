@@ -61,6 +61,12 @@ type claudeSession struct {
 	gracefulStopTimeout time.Duration
 	ccHooks             *ccPermissionHookRunner // Claude Code PermissionRequest hook runner
 
+	// toolUseIDs maps tool_use id → tool name, so that tool_result events
+	// (which reference the tool_use by id) can be correlated back to the
+	// tool name. Guarded by toolUseIDsMu.
+	toolUseIDsMu sync.Mutex
+	toolUseIDs   map[string]string
+
 	// startupWarning holds a one-time message to surface to the IM user at
 	// session start (e.g. when a permission mode was silently downgraded).
 	startupWarning string
@@ -442,6 +448,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 		ccHooks:             newCCPermissionHookRunner(workDir),
 		startupWarning:      rootDowngradeWarning,
 		promptFilePath:      cleanupPromptPath,
+		toolUseIDs:          make(map[string]string),
 	}
 	cs.setPermissionMode(mode)
 	cs.sessionID.Store(sessionID)
@@ -694,6 +701,11 @@ func (cs *claudeSession) handleAssistant(raw map[string]any) {
 			if toolName == "AskUserQuestion" {
 				continue
 			}
+			if id, ok := item["id"].(string); ok && id != "" {
+				cs.toolUseIDsMu.Lock()
+				cs.toolUseIDs[id] = toolName
+				cs.toolUseIDsMu.Unlock()
+			}
 			inputSummary := summarizeInput(toolName, item["input"])
 			evt := core.Event{Type: core.EventToolUse, ToolName: toolName, ToolInput: inputSummary}
 			select {
@@ -739,13 +751,61 @@ func (cs *claudeSession) handleUser(raw map[string]any) {
 		}
 		contentType, _ := item["type"].(string)
 		if contentType == "tool_result" {
+			toolUseID, _ := item["tool_use_id"].(string)
+			var toolName string
+			if toolUseID != "" {
+				cs.toolUseIDsMu.Lock()
+				toolName = cs.toolUseIDs[toolUseID]
+				cs.toolUseIDsMu.Unlock()
+			}
 			isError, _ := item["is_error"].(bool)
+			resultContent := extractToolResultContent(item["content"])
 			if isError {
-				result, _ := item["content"].(string)
-				slog.Debug("claudeSession: tool error", "content", result)
+				slog.Debug("claudeSession: tool error", "tool", toolName, "content", resultContent)
+			}
+			var success bool
+			evt := core.Event{
+				Type:       core.EventToolResult,
+				ToolName:   toolName,
+				ToolResult: truncateStr(resultContent, 500),
+			}
+			if isError {
+				success = false
+				evt.ToolSuccess = &success
+			} else {
+				success = true
+				evt.ToolSuccess = &success
+			}
+			select {
+			case cs.events <- evt:
+			case <-cs.ctx.Done():
+				return
 			}
 		}
 	}
+}
+
+// extractToolResultContent extracts the text content from a tool_result's
+// "content" field. The content can be a plain string or an array of content
+// blocks (e.g. [{"type":"text","text":"..."}]).
+func extractToolResultContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			block, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := block["text"].(string); ok {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return ""
 }
 
 func (cs *claudeSession) handleResult(raw map[string]any) {
@@ -1162,8 +1222,8 @@ func (cs *claudeSession) Close() error {
 	// descendants (e.g. MCP server bridges) a second chance to run cleanup
 	// handlers that respond to signals but not stdin EOF.
 	if err := signalProcessGroup(cs.cmd, syscall.SIGTERM); err != nil {
-			slog.Warn("claudeSession: signal SIGTERM", "error", err)
-		}
+		slog.Warn("claudeSession: signal SIGTERM", "error", err)
+	}
 
 	select {
 	case <-cs.done:

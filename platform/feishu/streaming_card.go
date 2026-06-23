@@ -61,7 +61,7 @@ func renderStatusBanner(c core.SlotContent) string {
 
 const (
 	maxVisibleTools  = 8
-	maxToolResultLen = 120
+	maxToolResultLen = 300 // max runes for tool result in streaming timeline
 	maxToolsMDSize   = 4096
 	overflowMsg      = "另有 %d 条工具记录已收起"
 )

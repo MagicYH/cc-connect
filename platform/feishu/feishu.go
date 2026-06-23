@@ -5002,9 +5002,10 @@ func (p *Platform) onBotMenu(event *larkapplication.P2BotMenuV6) error {
 // ═══════════════════════════════════════════════════════════════
 
 const (
-	defaultToolIcon      = "app-default_outlined"
-	reasoningToolIcon    = "mindmap_outlined"
-	feishuCardTableLimit = 3
+	defaultToolIcon         = "app-default_outlined"
+	reasoningToolIcon       = "mindmap_outlined"
+	feishuCardTableLimit    = 3
+	maxToolResultDisplayLen = 400 // max runes for tool result in per-tool collapsible panel
 )
 
 var (
@@ -5488,6 +5489,12 @@ func extractToolDetailFromSummary(text string, desc toolDescriptor) string {
 			if urlText := extractFirstURL(line); urlText != "" {
 				return urlText
 			}
+		}
+		// Command text should be kept as-is; extracting quoted/code spans
+		// from shell commands strips the actual command and returns args (e.g.
+		// "sed -n '767,771p'" → "767,771p" instead of the full command).
+		if desc.Sanitizer == toolSanitizerCommand {
+			return line
 		}
 		for _, pattern := range desc.SummaryPatterns {
 			if match := pattern.FindStringSubmatch(line); len(match) > 1 {
@@ -6265,22 +6272,57 @@ func richStepRowContent(step core.ToolStep) string {
 }
 
 func richStepElement(step core.ToolStep) map[string]any {
-	text := map[string]any{
-		"tag":       "plain_text",
-		"content":   richStepRowContent(step),
-		"text_size": "notation",
-	}
-	elem := map[string]any{
-		"tag":  "div",
-		"text": text,
-	}
 	if step.Kind == core.ToolStepKindThinking {
-		text["text_color"] = "grey"
-		elem["icon"] = map[string]any{"tag": "standard_icon", "token": reasoningToolIcon}
-		return elem
+		return map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "plain_text", "content": richStepBody(step), "text_size": "notation", "text_color": "grey"},
+			"icon": map[string]any{"tag": "standard_icon", "token": reasoningToolIcon},
+		}
 	}
-	elem["icon"] = map[string]any{"tag": "standard_icon", "token": buildToolDisplay(step.Name, step.Summary).IconToken}
-	return elem
+	// Build a per-tool collapsible panel with header (name, status, duration)
+	// and body (input summary + result, both truncated).
+	display := buildToolDisplay(step.Name, step.Summary)
+	headerContent := fmt.Sprintf("`%s`", display.Title)
+	if dur := formatDuration(step.Duration); dur != "" {
+		headerContent += fmt.Sprintf(" <font color='grey'>%s</font>", dur)
+	}
+	if step.Done {
+		if step.Status == "error" || (step.Success != nil && !*step.Success) {
+			headerContent += " <text_tag color='red'>失败</text_tag>"
+		} else {
+			headerContent += " <text_tag color='green'>完成</text_tag>"
+		}
+	}
+
+	// Body: input + result, truncated
+	var bodyParts []string
+	if detail := display.Detail; detail != "" {
+		bodyParts = append(bodyParts, fmt.Sprintf("<font color='grey'>输入</font> %s", detail))
+	}
+	if result := strings.TrimSpace(step.Result); result != "" {
+		if len([]rune(result)) > maxToolResultDisplayLen {
+			result = string([]rune(result)[:maxToolResultDisplayLen]) + "…"
+		}
+		bodyParts = append(bodyParts, fmt.Sprintf("<font color='grey'>结果</font> %s", result))
+	}
+
+	elements := []map[string]any{
+		{"tag": "markdown", "content": strings.Join(bodyParts, "\n")},
+	}
+	return map[string]any{
+		"tag":              "collapsible_panel",
+		"expanded":         false,
+		"background_color": "grey",
+		"header": map[string]any{
+			"title":            map[string]any{"tag": "markdown", "content": headerContent},
+			"background_color": "wathet-50",
+			"icon":             map[string]any{"tag": "standard_icon", "token": display.IconToken},
+		},
+		"border":           map[string]any{"color": "grey"},
+		"vertical_spacing": "4px",
+		"padding":          "4px 8px",
+		"elements":         elements,
+	}
 }
 
 func richPlaceholderElement(text string) map[string]any {
