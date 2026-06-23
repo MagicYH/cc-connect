@@ -372,6 +372,47 @@ func TestBuildStreamingCardSkeletonWithThinking(t *testing.T) {
 	}
 }
 
+func TestFlushControllerDedup(t *testing.T) {
+	fc := newFlushController()
+
+	dispatched := fc.markDirty("status_banner", "content A")
+	if !dispatched {
+		t.Error("first write should be dispatched")
+	}
+
+	dispatched = fc.markDirty("status_banner", "content A")
+	if dispatched {
+		t.Error("duplicate content should be deduped")
+	}
+
+	dispatched = fc.markDirty("status_banner", "content B")
+	if !dispatched {
+		t.Error("changed content should be dispatched")
+	}
+
+	dispatched = fc.markDirty("tools_md", "tool content")
+	if !dispatched {
+		t.Error("different slot should be dispatched")
+	}
+}
+
+func TestFlushControllerClear(t *testing.T) {
+	fc := newFlushController()
+
+	fc.markDirty("status_banner", "content A")
+	fc.markDirty("tools_md", "tool content")
+
+	pending := fc.drainPending()
+	if len(pending) != 2 {
+		t.Errorf("expected 2 pending slots, got %d", len(pending))
+	}
+
+	pending = fc.drainPending()
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending after drain, got %d", len(pending))
+	}
+}
+
 func TestStreamSlotContentRoutesToSlotAPI(t *testing.T) {
 	// Verify each StreamingSlotID maps to the correct element_id.
 	tests := []struct {
@@ -420,5 +461,56 @@ func TestStreamSlotContentRoutesToSlotAPI(t *testing.T) {
 	foot := renderSlotContent(core.SlotFooterNote, core.SlotContent{StatusFooter: "elapsed 5s"})
 	if foot != "elapsed 5s" {
 		t.Errorf("renderSlotContent for SlotFooterNote = %q, want %q", foot, "elapsed 5s")
+	}
+}
+
+func TestStreamingCardLifecycle(t *testing.T) {
+	// 1. Build skeleton
+	skeleton := buildStreamingCardSkeleton(core.CardStatusThinking, "")
+	var card map[string]any
+	if err := json.Unmarshal([]byte(skeleton), &card); err != nil {
+		t.Fatalf("skeleton parse error: %v", err)
+	}
+	config := card["config"].(map[string]any)
+	if config["streaming_mode"] != true {
+		t.Fatal("skeleton should have streaming_mode=true")
+	}
+
+	// 2. Render status banner for thinking phase
+	banner := renderStatusBanner(core.SlotContent{Phase: core.PhaseThinking, Elapsed: 3 * time.Second})
+	if !strings.Contains(banner, "思考中") {
+		t.Errorf("thinking banner missing 思考中: %q", banner)
+	}
+
+	// 3. Render tools timeline with running tool
+	tools := renderToolsTimeline(core.SlotContent{ToolSteps: []core.ToolStep{
+		{Kind: core.ToolStepKindTool, Name: "Read", Summary: "path: core/engine.go", Status: "running", Done: false, Duration: 1200 * time.Millisecond},
+	}})
+	if !strings.Contains(tools, "运行") || !strings.Contains(tools, "`Read`") {
+		t.Errorf("tools timeline missing running tool: %q", tools)
+	}
+
+	// 4. Render tools timeline with completed tool + result
+	tools = renderToolsTimeline(core.SlotContent{ToolSteps: []core.ToolStep{
+		{Kind: core.ToolStepKindTool, Name: "Read", Summary: "path: core/engine.go", Status: "complete", Done: true, Result: "32 lines, 1200 bytes", Duration: 500 * time.Millisecond},
+	}})
+	if !strings.Contains(tools, "完成") || !strings.Contains(tools, "↳") {
+		t.Errorf("tools timeline missing completed tool with result: %q", tools)
+	}
+
+	// 5. Build completed card
+	completed, err := buildCompletedCardJSON(core.CardStatusDone, []core.ToolStep{
+		{Kind: core.ToolStepKindTool, Name: "Read", Summary: "a.go", Status: "complete", Done: true, Duration: 500 * time.Millisecond},
+	}, "Final answer", false, "1 tool used")
+	if err != nil {
+		t.Fatalf("completed card error: %v", err)
+	}
+	var completedCard map[string]any
+	if err := json.Unmarshal(completed, &completedCard); err != nil {
+		t.Fatalf("completed card parse error: %v", err)
+	}
+	completedConfig := completedCard["config"].(map[string]any)
+	if completedConfig["streaming_mode"] != false {
+		t.Error("completed card should have streaming_mode=false")
 	}
 }

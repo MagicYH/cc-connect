@@ -4332,6 +4332,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	triggerAutoCompress := false
 	pendingSend := sendDone
 
+	var streamingCardHandle any     // handle from BuildStreamingCard
+	var streamingCardDegraded bool  // degraded to full-card rebuild this turn
+	var streamingCardFinalized bool // streaming card successfully finalized this EventResult
+	var streamingCardDisabled bool  // permanently disabled this turn (BuildStreamingCard failed)
+	var hasTextContent bool         // true once first EventText arrives
+
 	// stopTyping tracks the current turn's typing indicator so it can be
 	// stopped when a queued message starts a new turn.
 	stopTyping := stopTypingFn
@@ -4544,9 +4550,16 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		// main codebase has no per-session quiet flag; pr309 referenced
 		// sessionQuiet which we drop. e.display.ThinkingMessages /
 		// ToolMessages handle user-level quiet in the fallback branches.
+		streamingCardSupporter, hasStreamingCardSupport := p.(StreamingRichCardSupporter)
 		richCardSupporter, hasRichCard := p.(RichCardSupporter)
 		// Card 2.0 rich-card path is opt-in via [display] mode = "rich".
 		// Default "legacy" keeps upstream behavior for all platforms.
+		// streamingCardDisabled is a per-turn flag: once BuildStreamingCard fails
+		// or chatID is unavailable, it stays false for the rest of the turn so
+		// subsequent events fall through to the RichCardSupporter path.
+		if e.display.CardMode != "rich" || streamingCardDisabled {
+			hasStreamingCardSupport = false
+		}
 		if e.display.CardMode != "rich" {
 			hasRichCard = false
 		}
@@ -4561,6 +4574,44 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			return richCardSupporter.BuildRichCard(status, title, steps, resolveRichCardMarkdown(markdown, !streaming), streaming, statusFooter)
 		}
 
+		ensureStreamingCard := func(status CardStatus, title string) error {
+			if streamingCardHandle != nil {
+				return nil
+			}
+			chatID := extractChatID(replyCtx)
+			if chatID == "" {
+				streamingCardDisabled = true
+				hasStreamingCardSupport = false
+				return fmt.Errorf("no chatID available for streaming card")
+			}
+			handle, err := streamingCardSupporter.BuildStreamingCard(e.ctx, chatID, status, title)
+			if err != nil {
+				slog.Debug("engine: BuildStreamingCard failed, falling back to RichCardSupporter", "error", err)
+				streamingCardDisabled = true
+				hasStreamingCardSupport = false
+				return err
+			}
+			streamingCardHandle = handle
+			cardMessageID = handle
+			return nil
+		}
+
+		streamSlotUpdate := func(slot StreamingSlotID, content SlotContent) {
+			if streamingCardHandle == nil || streamingCardDegraded {
+				return
+			}
+			err := streamingCardSupporter.StreamSlotContent(e.ctx, streamingCardHandle, slot, content)
+			if err != nil {
+				if errors.Is(err, ErrSlotRateLimited) {
+					slog.Debug("engine: slot rate limited, degrading to full-card rebuild", "slot", slot)
+					streamingCardDegraded = true
+				} else if errors.Is(err, ErrSlotNotSupported) {
+					slog.Debug("engine: slot not supported, degrading to full-card rebuild", "slot", slot)
+					streamingCardDegraded = true
+				}
+			}
+		}
+
 		switch event.Type {
 		case EventThinking:
 			if isEllipsisOnly(event.Content) {
@@ -4571,13 +4622,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if !e.display.ThinkingMessages {
 					break
 				}
-				if thinking := strings.TrimSpace(truncateIf(event.Content, e.display.ThinkingMaxLen)); thinking != "" {
+				thinking := strings.TrimSpace(truncateIf(event.Content, e.display.ThinkingMaxLen))
+				if thinking != "" {
 					toolSteps = append(toolSteps, ToolStep{
 						Kind:    ToolStepKindThinking,
 						Name:    "Thinking",
 						Summary: thinking,
 						Done:    true,
 					})
+				}
+				if hasStreamingCardSupport && !streamingCardDegraded {
+					if err := ensureStreamingCard(CardStatusThinking, "Thinking"); err == nil {
+						phase := derivePhase(toolSteps, hasTextContent)
+						streamSlotUpdate(SlotStatusBanner, SlotContent{Phase: phase})
+						streamSlotUpdate(SlotThinking, SlotContent{ThinkingText: thinking})
+					}
+					break
 				}
 				if cardMessageID == nil {
 					card := buildResolvedRichCard(CardStatusThinking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
@@ -4662,10 +4722,19 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					break
 				}
 				toolSteps = append(toolSteps, ToolStep{
-					Kind:    ToolStepKindTool,
-					Name:    event.ToolName,
-					Summary: truncateIf(event.ToolInput, e.display.ToolMaxLen),
+					Kind:      ToolStepKindTool,
+					Name:      event.ToolName,
+					Summary:   truncateIf(event.ToolInput, e.display.ToolMaxLen),
+					startedAt: time.Now(),
 				})
+				if hasStreamingCardSupport && !streamingCardDegraded {
+					if err := ensureStreamingCard(CardStatusWorking, "Working"); err == nil {
+						phase := derivePhase(toolSteps, hasTextContent)
+						streamSlotUpdate(SlotStatusBanner, SlotContent{Phase: phase, ActiveTool: event.ToolName, ToolSummary: truncateIf(event.ToolInput, e.display.ToolMaxLen)})
+						streamSlotUpdate(SlotTools, SlotContent{ToolSteps: toolSteps})
+					}
+					break
+				}
 				if cardMessageID == nil {
 					card := buildResolvedRichCard(CardStatusWorking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
 					if starter, ok := p.(PreviewStarter); ok {
@@ -4792,6 +4861,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if result != "" || event.ToolStatus != "" || event.ToolExitCode != nil || event.ToolSuccess != nil {
 					if hasRichCard {
 						toolSteps = mergeRichToolResult(toolSteps, event, result, e.display.ToolMaxLen)
+						if hasStreamingCardSupport && !streamingCardDegraded {
+							phase := derivePhase(toolSteps, hasTextContent)
+							streamSlotUpdate(SlotStatusBanner, SlotContent{Phase: phase, ActiveTool: lastActiveTool(toolSteps), ToolSummary: lastActiveToolSummary(toolSteps)})
+							streamSlotUpdate(SlotTools, SlotContent{ToolSteps: toolSteps})
+							break
+						}
 						if cardMessageID == nil {
 							card := buildResolvedRichCard(CardStatusWorking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
 							if starter, ok := p.(PreviewStarter); ok {
@@ -4874,7 +4949,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					}
 					textParts = append(textParts, event.Content)
 					partialText += event.Content
-					if hasRichCard {
+					hasTextContent = true
+					if hasStreamingCardSupport && !streamingCardDegraded && !silentHold {
+						if err := ensureStreamingCard(CardStatusWorking, "Working"); err == nil {
+							phase := derivePhase(toolSteps, hasTextContent)
+							streamSlotUpdate(SlotStatusBanner, SlotContent{Phase: phase})
+							streamSlotUpdate(SlotMainText, SlotContent{MainText: partialText})
+						}
+						// Skip the RichCardSupporter path when streaming card is active
+					} else if hasRichCard {
 						if !silentHold {
 							// Lazy creation: if we held during the first text events and
 							// only released this chunk, the initial-create branch above
@@ -5232,6 +5315,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				// sp.discard() clears previewMsgID so sp.needsDoneReaction() also returns false,
 				// preventing a stray done_emoji push.
 				sp.discard()
+				// Streaming card finalization for silent reply
+				if hasStreamingCardSupport && streamingCardHandle != nil {
+					silentBody := partialText
+					if stripped, ok := stripTrailingSilent(partialText); ok {
+						silentBody = strings.TrimRight(stripped, " \t\r\n")
+					}
+					if silentBody != "" || len(toolSteps) > 0 {
+						_ = streamingCardSupporter.FinalizeStreamingCard(e.ctx, streamingCardHandle, toolSteps, silentBody, CardStatusDone, "")
+					} else {
+						if cleaner, ok := p.(PreviewCleaner); ok {
+							_ = cleaner.DeletePreviewMessage(e.ctx, streamingCardHandle)
+						}
+					}
+					streamingCardHandle = nil
+					cardMessageID = nil
+				}
 				// Rich mode: cardMessageID is tracked independently of sp.previewMsgID,
 				// so sp.discard() doesn't reach it. Without explicit handling the rich
 				// card would stay frozen in "Working" / "Thinking" header state forever
@@ -5267,6 +5366,21 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					cardMessageID = nil
 				}
 				slog.Info("silent reply suppressed", "session", session.ID)
+			} else if hasStreamingCardSupport && streamingCardHandle != nil && !isSilent {
+				finalMarkdown := resolveRichCardMarkdown(fullResponse, true)
+				err := streamingCardSupporter.FinalizeStreamingCard(e.ctx, streamingCardHandle, toolSteps, finalMarkdown, CardStatusDone, statusFooter)
+				if err != nil {
+					slog.Warn("engine: FinalizeStreamingCard failed, falling back to RichCard", "error", err)
+					streamingCardHandle = nil
+					cardMessageID = nil
+				} else {
+					cardMessageID = nil
+					streamingCardHandle = nil
+					streamingCardFinalized = true
+				}
+			}
+			if streamingCardFinalized {
+				// Streaming card finalized successfully, skip other paths
 			} else if hasRichCard && !strings.Contains(fullResponse, "<at ") && !strings.Contains(fullResponse, "\u003cat ") {
 				// Rich card path: interactive cards render <at> tags visually
 				// but don't populate the mentions field that triggers bot
@@ -5481,6 +5595,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				partialText = ""
 				lastRichCardUpdate = time.Time{}
 				lastRichCardLen = 0
+				streamingCardHandle = nil
+				streamingCardDegraded = false
+				streamingCardDisabled = false
+				streamingCardFinalized = false
+				hasTextContent = false
 				queuedRenderer := func(content string) string {
 					return e.renderOutgoingContentForWorkspace(queued.platform, content, workspaceDir)
 				}
@@ -5702,6 +5821,9 @@ func mergeRichToolResult(steps []ToolStep, event Event, result string, maxLen in
 	steps[idx].ExitCode = event.ToolExitCode
 	steps[idx].Success = event.ToolSuccess
 	steps[idx].Done = true
+	if !steps[idx].startedAt.IsZero() {
+		steps[idx].Duration = time.Since(steps[idx].startedAt)
+	}
 	return steps
 }
 
@@ -16064,4 +16186,42 @@ func restoreActiveProviderFromSession(agent Agent, session *Session) {
 	}
 	slog.Info("restored active provider from session",
 		"session_id", session.ID, "provider", want)
+}
+
+// extractChatID extracts a chat ID from the platform-specific reply context.
+// It uses the ReplyContextChatID interface so platforms can expose their chatID
+// without core knowing platform internals.
+func extractChatID(replyCtx any) string {
+	if cid, ok := replyCtx.(ReplyContextChatID); ok {
+		return cid.ChatID()
+	}
+	return ""
+}
+
+func lastActiveTool(steps []ToolStep) string {
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Kind == ToolStepKindTool && !steps[i].Done {
+			return steps[i].Name
+		}
+	}
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Kind == ToolStepKindTool {
+			return steps[i].Name
+		}
+	}
+	return ""
+}
+
+func lastActiveToolSummary(steps []ToolStep) string {
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Kind == ToolStepKindTool && !steps[i].Done {
+			return steps[i].Summary
+		}
+	}
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Kind == ToolStepKindTool {
+			return steps[i].Summary
+		}
+	}
+	return ""
 }

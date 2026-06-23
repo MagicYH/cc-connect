@@ -181,6 +181,13 @@ type SlotContent struct {
 	StatusFooter string
 }
 
+// ReplyContextChatID is an optional interface that platforms can implement on
+// their reply context type to expose the chat ID. The engine uses this to
+// obtain a chatID for BuildStreamingCard without knowing platform internals.
+type ReplyContextChatID interface {
+	ChatID() string
+}
+
 // StreamingRichCardSupporter is an optional interface for platforms that support
 // multi-slot streaming card updates. It does NOT embed RichCardSupporter — they
 // are independent interfaces. The engine checks StreamingRichCardSupporter first;

@@ -15396,3 +15396,198 @@ func TestDerivePhase(t *testing.T) {
 		})
 	}
 }
+
+// stubRichCardOnly implements Platform + RichCardSupporter (no StreamingRichCardSupporter).
+type stubRichCardOnly struct {
+	stubPlatformEngine
+	builtCards []string
+}
+
+func (s *stubRichCardOnly) BuildRichCard(status CardStatus, title string, steps []ToolStep, markdown string, streaming bool, statusFooter string) string {
+	s.builtCards = append(s.builtCards, title)
+	return fmt.Sprintf("card:%s", title)
+}
+
+// stubStreamingCardOnly implements Platform + StreamingRichCardSupporter (no RichCardSupporter).
+type stubStreamingCardOnly struct {
+	stubPlatformEngine
+	built     bool
+	slots     map[StreamingSlotID]SlotContent
+	finalized bool
+}
+
+func (s *stubStreamingCardOnly) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+	s.built = true
+	s.slots = make(map[StreamingSlotID]SlotContent)
+	return "streaming-handle", nil
+}
+
+func (s *stubStreamingCardOnly) StreamSlotContent(_ context.Context, _ any, slot StreamingSlotID, content SlotContent) error {
+	s.slots[slot] = content
+	return nil
+}
+
+func (s *stubStreamingCardOnly) FinalizeStreamingCard(_ context.Context, _ any, _ []ToolStep, _ string, _ CardStatus, _ string) error {
+	s.finalized = true
+	return nil
+}
+
+// stubStreamingAndRichCard implements both StreamingRichCardSupporter and RichCardSupporter.
+// finalizeErr controls whether FinalizeStreamingCard returns an error.
+type stubStreamingAndRichCard struct {
+	stubPlatformEngine
+	chatID        string
+	built         bool
+	slots         map[StreamingSlotID]SlotContent
+	finalized     bool
+	finalizeErr   error
+	richCards     []string
+	previewStarts []string
+	updates       []string
+}
+
+func (s *stubStreamingAndRichCard) ChatID() string { return s.chatID }
+
+func (s *stubStreamingAndRichCard) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+	s.built = true
+	s.slots = make(map[StreamingSlotID]SlotContent)
+	return "streaming-handle", nil
+}
+
+func (s *stubStreamingAndRichCard) StreamSlotContent(_ context.Context, _ any, slot StreamingSlotID, content SlotContent) error {
+	s.slots[slot] = content
+	return nil
+}
+
+func (s *stubStreamingAndRichCard) FinalizeStreamingCard(_ context.Context, _ any, _ []ToolStep, _ string, _ CardStatus, _ string) error {
+	s.finalized = true
+	return s.finalizeErr
+}
+
+func (s *stubStreamingAndRichCard) BuildRichCard(status CardStatus, title string, steps []ToolStep, markdown string, streaming bool, statusFooter string) string {
+	s.richCards = append(s.richCards, fmt.Sprintf("status=%s,body=%s", status, previewText(markdown, 80)))
+	return fmt.Sprintf("rich-card:%s", status)
+}
+
+func (s *stubStreamingAndRichCard) SendPreviewStart(_ context.Context, _ any, content string) (any, error) {
+	s.previewStarts = append(s.previewStarts, content)
+	return "rich-handle", nil
+}
+
+func (s *stubStreamingAndRichCard) UpdateMessage(_ context.Context, _ any, content string) error {
+	s.updates = append(s.updates, content)
+	return nil
+}
+
+func TestEngineFallbackToRichCardSupporter(t *testing.T) {
+	p := &stubRichCardOnly{stubPlatformEngine: stubPlatformEngine{n: "test-rich"}}
+	if _, ok := any(p).(StreamingRichCardSupporter); ok {
+		t.Fatal("stubRichCardOnly should not implement StreamingRichCardSupporter")
+	}
+	if _, ok := any(p).(RichCardSupporter); !ok {
+		t.Fatal("stubRichCardOnly should implement RichCardSupporter")
+	}
+}
+
+func TestEngineStreamingCardSupporterTakesPriority(t *testing.T) {
+	p := &stubStreamingCardOnly{stubPlatformEngine: stubPlatformEngine{n: "test-stream"}}
+	if _, ok := any(p).(StreamingRichCardSupporter); !ok {
+		t.Fatal("stubStreamingCardOnly should implement StreamingRichCardSupporter")
+	}
+	if _, ok := any(p).(RichCardSupporter); ok {
+		t.Fatal("stubStreamingCardOnly should not implement RichCardSupporter")
+	}
+}
+
+type chatIDReplyCtx struct {
+	chatID string
+}
+
+func (c chatIDReplyCtx) ChatID() string { return c.chatID }
+
+func TestExtractChatID(t *testing.T) {
+	tests := []struct {
+		name     string
+		replyCtx any
+		want     string
+	}{
+		{
+			name:     "nil context",
+			replyCtx: nil,
+			want:     "",
+		},
+		{
+			name:     "string context",
+			replyCtx: "some-string",
+			want:     "",
+		},
+		{
+			name:     "implements ChatID method",
+			replyCtx: chatIDReplyCtx{chatID: "oc_test123"},
+			want:     "oc_test123",
+		},
+		{
+			name: "struct without ChatID method",
+			replyCtx: &struct {
+				Other string
+			}{Other: "value"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractChatID(tt.replyCtx)
+			if got != tt.want {
+				t.Errorf("extractChatID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard verifies that
+// when FinalizeStreamingCard fails, the engine falls back to the RichCardSupporter
+// path instead of leaving the card stuck in "Thinking/Working" state.
+func TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard(t *testing.T) {
+	p := &stubStreamingAndRichCard{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		chatID:             "oc_test",
+		finalizeErr:        errors.New("finalize failed"),
+	}
+
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{
+		ThinkingMessages: true,
+		ThinkingMaxLen:   300,
+		ToolMaxLen:       500,
+		ToolMessages:     true,
+		Mode:             "full",
+		CardMode:         "rich",
+	})
+
+	sessionKey := "feishu:user-stream-fail"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("s-stream-fail")
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     chatIDReplyCtx{chatID: "oc_test"},
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "Hello world"}
+	agentSession.events <- Event{Type: EventResult, Content: "Hello world", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-fail", time.Now(), nil, nil, state.replyCtx)
+
+	if !p.built {
+		t.Error("expected BuildStreamingCard to be called")
+	}
+	if !p.finalized {
+		t.Error("expected FinalizeStreamingCard to be called")
+	}
+	// The key assertion: when FinalizeStreamingCard fails, the RichCardSupporter
+	// path must still produce a card so the message doesn't get stuck.
+	if len(p.richCards) == 0 && len(p.sent) == 0 {
+		t.Error("expected fallback to RichCardSupporter or p.Send when FinalizeStreamingCard fails, but neither produced output")
+	}
+}

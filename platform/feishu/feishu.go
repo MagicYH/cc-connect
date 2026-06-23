@@ -112,6 +112,8 @@ type replyContext struct {
 	sessionKey string
 }
 
+func (rc *replyContext) ChatID() string { return rc.chatID }
+
 type Platform struct {
 	mu                         sync.RWMutex
 	platformName               string
@@ -2722,6 +2724,9 @@ func (p *Platform) SendWithStatusFooter(ctx context.Context, rctx any, content, 
 		return fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
 	}
 	content = p.resolveMentionsInContent(ctx, rc.chatID, content)
+	// Redact email addresses to prevent Feishu content audit rejection.
+	content = emailAddressRe.ReplaceAllString(content, "[email redacted]")
+	footer = emailAddressRe.ReplaceAllString(footer, "[email redacted]")
 	// For plain-text content, append the footer as italic text via MsgTypePost.
 	// Post format renders Markdown (including italic) without the card chrome,
 	// giving a more natural chat appearance for simple messages.
@@ -2980,6 +2985,9 @@ func predictMsgType(content string, useInteractiveCard bool) string {
 }
 
 func buildReplyContent(content string, useInteractiveCard bool) (msgType string, body string) {
+	// Redact email addresses before sending to prevent Feishu content audit
+	// rejection (code=230028: "contain sensitive data: EMAIL_ADDRESS").
+	content = emailAddressRe.ReplaceAllString(content, "[email redacted]")
 	if !containsMarkdown(content) {
 		if containsAtTag(content) {
 			// Plain text MsgTypeText doesn't support <at> tags properly;
@@ -4468,6 +4476,9 @@ func (p *Platform) StreamRichCardText(ctx context.Context, previewHandle any, fu
 		return fmt.Errorf("%s: StreamRichCardText: invalid preview handle type %T", p.tag(), previewHandle)
 	}
 
+	// Redact email addresses to prevent Feishu content audit rejection.
+	fullText = emailAddressRe.ReplaceAllString(fullText, "[email redacted]")
+
 	// Serialize all PUTs for one card so the monotonic sequence counter is
 	// preserved across concurrent EventText calls; rate-limit headroom is
 	// huge (Lark allows 50 QPS per element).
@@ -4537,6 +4548,8 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 	} else if payload, ok := core.ParseProgressCardPayload(content); ok {
 		cardJSON = buildProgressCardJSONFromPayload(payload)
 	} else {
+		// Redact email addresses to prevent Feishu content audit rejection.
+		content = emailAddressRe.ReplaceAllString(content, "[email redacted]")
 		processed := content
 		if containsMarkdown(content) {
 			processed = preprocessFeishuMarkdown(content)
@@ -4571,8 +4584,8 @@ func (p *Platform) UpdateMessageWithStatusFooter(ctx context.Context, previewHan
 	if !ok {
 		return fmt.Errorf("%s: invalid preview handle type %T", p.tag(), previewHandle)
 	}
-	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(content))
-	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(footer))
+	processedBody := sanitizeMarkdownURLs(preprocessFeishuMarkdown(emailAddressRe.ReplaceAllString(content, "[email redacted]")))
+	processedFooter := sanitizeMarkdownURLs(preprocessFeishuMarkdown(emailAddressRe.ReplaceAllString(footer, "[email redacted]")))
 	cardJSON := buildCardJSONWithStatusFooter(processedBody, processedFooter)
 	// Same card-entity routing as UpdateMessage above.
 	h.mu.Lock()
@@ -5508,6 +5521,9 @@ var (
 	secretAssignRe    = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:token|secret|password|api[_-]?key|authorization|cookie|credential|bearer|session[_-]?id|client[_-]?secret|access[_-]?key)[A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s"'` + "`" + `]+)`)
 	authHeaderRe      = regexp.MustCompile(`(?i)(Authorization\s*:\s*(?:Bearer|Basic|Token)\s+)([^\s'"` + "`" + `]+)`)
 	sensitiveNameRe   = regexp.MustCompile(`(?i)(token|secret|password|api[_-]?key|authorization|cookie|credential|bearer|session[_-]?id|client[_-]?secret|access[_-]?key)`)
+	// emailAddressRe matches common email patterns (user@domain.tld) that trigger
+	// Feishu content audit rejection (code=230028: "contain sensitive data: EMAIL_ADDRESS").
+	emailAddressRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 )
 
 func extractFirstURL(text string) string {
@@ -5601,6 +5617,7 @@ func sanitizeCommandLike(value string) string {
 func redactInlineSecrets(value string) string {
 	value = secretAssignRe.ReplaceAllString(value, "$1=[redacted]")
 	value = authHeaderRe.ReplaceAllString(value, "$1[redacted]")
+	value = emailAddressRe.ReplaceAllString(value, "[email redacted]")
 	return value
 }
 
@@ -6320,7 +6337,7 @@ const maxRichCardJSONBytes = 28000
 // reasoning/tool panels, streaming markdown body, status-colored header, and a
 // pre-composed multi-line statusFooter (engine-owned, includes elapsed).
 func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) string {
-	b, err := buildRichCardJSONBytes(status, steps, markdown, streaming, statusFooter)
+	b, err := buildCompletedCardJSON(status, steps, markdown, streaming, statusFooter)
 	if err != nil {
 		slog.Debug("feishu: build rich card marshal failed, fallback to basic card", "error", err)
 		return buildCardJSONWithStatus(markdown, status)
@@ -6342,7 +6359,7 @@ func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, mark
 		{perLane: 3, textLen: 80},
 	} {
 		compactSteps := compactRichStepsForCardSize(steps, limit.perLane, limit.textLen)
-		compact, err := buildRichCardJSONBytes(status, compactSteps, markdown, streaming, statusFooter)
+		compact, err := buildCompletedCardJSON(status, compactSteps, markdown, streaming, statusFooter)
 		if err == nil && len(compact) <= maxRichCardJSONBytes {
 			slog.Debug(
 				"feishu: rich card exceeded size limit, compacted panels",
@@ -6363,7 +6380,7 @@ func buildRichCard(status core.CardStatus, _ string, steps []core.ToolStep, mark
 	return buildCardJSONWithStatus(fallbackMarkdown, status)
 }
 
-func buildRichCardJSONBytes(status core.CardStatus, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) ([]byte, error) {
+func buildCompletedCardJSON(status core.CardStatus, steps []core.ToolStep, markdown string, streaming bool, statusFooter string) ([]byte, error) {
 	reasoningSteps, toolSteps := splitRichStepsByLane(steps)
 	panelMaps := make([]map[string]any, 0, 2)
 	if len(reasoningSteps) > 0 {
@@ -6589,3 +6606,5 @@ func (p *Platform) SetPreviewStatus(previewHandle any, status core.CardStatus) {
 		slog.Debug("feishu: set preview status patch failed", "code", resp.Code, "msg", resp.Msg)
 	}
 }
+
+var _ core.StreamingRichCardSupporter = (*Platform)(nil)

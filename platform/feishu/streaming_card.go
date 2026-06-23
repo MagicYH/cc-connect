@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/chenhg5/cc-connect/core"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 // formatDuration produces a human-friendly elapsed-time string.
@@ -371,5 +373,182 @@ func (p *Platform) StreamSlotContent(ctx context.Context, previewHandle any, slo
 		}
 		return fmt.Errorf("%s: stream slot content: %w", p.tag(), err)
 	}
+
+	slog.Debug(
+		p.tag()+": stream slot content success",
+		"slot", slot,
+		"element_id", elementID,
+		"content_len", len(markdown),
+		"sequence", seq,
+	)
+	return nil
+}
+
+// BuildStreamingCard creates the initial multi-slot card skeleton, creates a
+// cardEntity for slot-level patching, sends the card as a new message, and
+// returns a handle.
+func (p *Platform) BuildStreamingCard(ctx context.Context, chatID string, status core.CardStatus, title string) (any, error) {
+	if !p.useInteractiveCard {
+		return nil, core.ErrSlotNotSupported
+	}
+
+	cardJSON := buildStreamingCardSkeleton(status, "")
+
+	cardID, err := p.createCardEntity(ctx, cardJSON)
+	if err != nil {
+		slog.Info(p.tag()+": streaming card create cardEntity failed, falling back", "error", err)
+		return nil, core.ErrSlotNotSupported
+	}
+
+	sendContent := fmt.Sprintf(`{"type":"card","data":{"card_id":"%s"}}`, cardID)
+
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(larkim.ReceiveIdTypeChatId).
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(chatID).
+			MsgType(larkim.MsgTypeInteractive).
+			Content(sendContent).
+			Build()).
+		Build()
+
+	var resp *larkim.CreateMessageResp
+	if err := p.withTransientRetry(ctx, "build streaming card", func() error {
+		return p.withFreshTenantAccessTokenRetry(ctx, "build streaming card", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+			var err error
+			resp, err = client.Im.Message.Create(ctx, req, options...)
+			if err != nil {
+				return fmt.Errorf("%s: build streaming card: %w", p.tag(), err)
+			}
+			if !resp.Success() {
+				return fmt.Errorf("%s: build streaming card code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+			}
+			return nil
+		})
+	}); err != nil {
+		return nil, err
+	}
+
+	msgID := ""
+	if resp.Data != nil && resp.Data.MessageId != nil {
+		msgID = *resp.Data.MessageId
+	}
+	if msgID == "" {
+		return nil, fmt.Errorf("%s: build streaming card: no message ID returned", p.tag())
+	}
+
+	return &feishuPreviewHandle{
+		messageID: msgID,
+		chatID:    chatID,
+		cardID:    cardID,
+		status:    status,
+	}, nil
+}
+
+// flushController tracks per-slot content hashes for dedup and manages
+// pending dirty slots for the next flush cycle.
+type flushController struct {
+	mu          sync.Mutex
+	lastHash    map[string]uint32 // slot element_id → fnv32 hash of last rendered content
+	lastContent map[string]string // slot element_id → last rendered content
+	pending     map[string]string // slot element_id → content to flush
+}
+
+func newFlushController() *flushController {
+	return &flushController{
+		lastHash:    make(map[string]uint32),
+		lastContent: make(map[string]string),
+		pending:     make(map[string]string),
+	}
+}
+
+// markDirty records a slot content change. Returns true if the content
+// differs from the last flushed content (i.e., should be dispatched).
+func (fc *flushController) markDirty(elementID, content string) bool {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+
+	hash := fnv32(content)
+	if lastHash, ok := fc.lastHash[elementID]; ok && lastHash == hash {
+		if lastContent, ok := fc.lastContent[elementID]; ok && lastContent == content {
+			return false
+		}
+	}
+
+	fc.pending[elementID] = content
+	fc.lastHash[elementID] = hash
+	fc.lastContent[elementID] = content
+	return true
+}
+
+// drainPending returns all pending slot updates and clears the pending map.
+func (fc *flushController) drainPending() map[string]string {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+
+	result := make(map[string]string, len(fc.pending))
+	for k, v := range fc.pending {
+		result[k] = v
+	}
+	fc.pending = make(map[string]string)
+	return result
+}
+
+// fnv32 computes a 32-bit FNV-1 hash for dedup.
+func fnv32(s string) uint32 {
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	h := uint32(offset32)
+	for i := 0; i < len(s); i++ {
+		h *= prime32
+		h ^= uint32(s[i])
+	}
+	return h
+}
+
+// FinalizeStreamingCard performs two-phase finalization:
+// Phase 1: Patch all slots to terminal content (still in streaming mode)
+// Phase 2: Disable streaming mode + rebuild full card with completed layout + set header
+func (p *Platform) FinalizeStreamingCard(ctx context.Context, previewHandle any, steps []core.ToolStep, markdown string, status core.CardStatus, statusFooter string) error {
+	h, ok := previewHandle.(*feishuPreviewHandle)
+	if !ok {
+		return fmt.Errorf("%s: FinalizeStreamingCard: %w", p.tag(), core.ErrSlotInvalidHandle)
+	}
+
+	// Phase 1: Patch slots to terminal content
+	phase1Slots := []struct {
+		slot    core.StreamingSlotID
+		content core.SlotContent
+	}{
+		{core.SlotStatusBanner, core.SlotContent{Phase: core.PhaseDone}},
+		{core.SlotThinking, core.SlotContent{ThinkingText: ""}},
+		{core.SlotTools, core.SlotContent{ToolSteps: steps}},
+		{core.SlotMainText, core.SlotContent{MainText: markdown}},
+		{core.SlotFooterNote, core.SlotContent{StatusFooter: statusFooter}},
+	}
+	for _, s := range phase1Slots {
+		_ = p.StreamSlotContent(ctx, h, s.slot, s.content)
+		// Phase 1 errors are not fatal — content may already be correct
+	}
+	slog.Debug(p.tag()+": finalize streaming card Phase 1 complete", "slots_patched", len(phase1Slots))
+
+	// Phase 2: Rebuild full card with completed layout
+	completedJSON, err := buildCompletedCardJSON(status, steps, markdown, false, statusFooter)
+	if err != nil {
+		slog.Error(p.tag()+": finalize streaming card: build completed card failed", "error", err)
+		return err
+	}
+
+	h.mu.Lock()
+	h.lastContent = string(completedJSON)
+	h.status = status
+	h.mu.Unlock()
+
+	if err := p.updateCardEntity(ctx, h, string(completedJSON)); err != nil {
+		slog.Warn(p.tag()+": finalize streaming card: Phase 2 failed (card content correct, header may be wrong)", "error", err)
+		return err
+	}
+
 	return nil
 }
