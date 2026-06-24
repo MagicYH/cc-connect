@@ -1497,6 +1497,18 @@ func summarizeInput(tool string, input any) string {
 		if p, ok := m["glob_pattern"].(string); ok {
 			return p
 		}
+	case "Agent":
+		desc, _ := m["description"].(string)
+		subType, _ := m["subagent_type"].(string)
+		if desc != "" && subType != "" {
+			return fmt.Sprintf("%s %s", subType, desc)
+		}
+		if desc != "" {
+			return desc
+		}
+		if subType != "" {
+			return subType
+		}
 	}
 
 	b, err := json.Marshal(m)
