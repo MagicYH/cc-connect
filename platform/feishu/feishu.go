@@ -6283,6 +6283,14 @@ func richStepElement(step core.ToolStep) map[string]any {
 	// and body (input summary + result, both truncated).
 	display := buildToolDisplay(step.Name, step.Summary)
 	headerContent := fmt.Sprintf("`%s`", display.Title)
+	if display.Detail != "" {
+		detailRunes := []rune(display.Detail)
+		if len(detailRunes) > 60 {
+			headerContent += fmt.Sprintf(" %s", string(detailRunes[:60])+"…")
+		} else {
+			headerContent += fmt.Sprintf(" %s", display.Detail)
+		}
+	}
 	if dur := formatDuration(step.Duration); dur != "" {
 		headerContent += fmt.Sprintf(" <font color='grey'>%s</font>", dur)
 	}
