@@ -8,7 +8,9 @@
       "Bash(go test:*)",
       "WebSearch",
       "Bash(awk '{print $1}')",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Read(//data00/home/chenhao.magic/**)",
+      "Bash(go build *)"
     ]
   }
 }
