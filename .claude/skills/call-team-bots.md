@@ -1,5 +1,5 @@
 ---
-name: add-team-bots
+name: call-team-bots
 description: Add team bots from cc-connect config to the current Feishu group chat using lark-cli
 ---
 
