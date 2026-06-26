@@ -2979,17 +2979,20 @@ func TestSendPermissionPrompt_CardPlatform(t *testing.T) {
 		t.Error("expected card to have buttons")
 	}
 	buttons := card.CollectButtons()
-	if len(buttons) < 2 {
-		t.Fatalf("expected at least 2 button rows, got %d", len(buttons))
+	if len(buttons) != 1 {
+		t.Fatalf("expected 1 button row, got %d", len(buttons))
 	}
-	if buttons[0][0].Data != "perm:allow" {
-		t.Errorf("expected first button data=perm:allow, got %s", buttons[0][0].Data)
+	if len(buttons[0]) != 3 {
+		t.Fatalf("expected 3 buttons in row, got %d", len(buttons[0]))
 	}
-	if buttons[0][1].Data != "perm:deny" {
-		t.Errorf("expected second button data=perm:deny, got %s", buttons[0][1].Data)
+	if buttons[0][0].Data != "perm:allow_all" {
+		t.Errorf("expected first button data=perm:allow_all, got %s", buttons[0][0].Data)
 	}
-	if buttons[1][0].Data != "perm:allow_all" {
-		t.Errorf("expected third button data=perm:allow_all, got %s", buttons[1][0].Data)
+	if buttons[0][1].Data != "perm:allow" {
+		t.Errorf("expected second button data=perm:allow, got %s", buttons[0][1].Data)
+	}
+	if buttons[0][2].Data != "perm:deny" {
+		t.Errorf("expected third button data=perm:deny, got %s", buttons[0][2].Data)
 	}
 	if len(p.sent) != 0 {
 		t.Errorf("plain text should not be sent when card is used, got %v", p.sent)
@@ -3038,8 +3041,8 @@ func TestSendPermissionPrompt_InlineButtonPlatform(t *testing.T) {
 	if len(p.buttonRows) < 2 {
 		t.Fatalf("expected at least 2 button rows, got %d", len(p.buttonRows))
 	}
-	if p.buttonRows[0][0].Data != "perm:allow" {
-		t.Errorf("expected perm:allow, got %s", p.buttonRows[0][0].Data)
+	if p.buttonRows[0][0].Data != "perm:allow_all" {
+		t.Errorf("expected perm:allow_all, got %s", p.buttonRows[0][0].Data)
 	}
 }
 

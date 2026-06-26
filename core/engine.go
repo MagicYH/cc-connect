@@ -10809,11 +10809,11 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 	if bs, ok := p.(InlineButtonSender); ok {
 		buttons := [][]ButtonOption{
 			{
+				{Text: e.i18n.T(MsgPermBtnAllowAll), Data: "perm:allow_all"},
 				{Text: e.i18n.T(MsgPermBtnAllow), Data: "perm:allow"},
-				{Text: e.i18n.T(MsgPermBtnDeny), Data: "perm:deny"},
 			},
 			{
-				{Text: e.i18n.T(MsgPermBtnAllowAll), Data: "perm:allow_all"},
+				{Text: e.i18n.T(MsgPermBtnDeny), Data: "perm:deny"},
 			},
 		}
 		if err := e.waitOutgoing(p); err != nil {
@@ -10837,6 +10837,10 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 				"perm_body":  body,
 			}
 		}
+		allowAllBtn := CardButton{
+			Text: e.i18n.T(MsgPermBtnAllowAll), Type: "primary", Value: "perm:allow_all",
+			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllowAll), "green"),
+		}
 		allowBtn := CardButton{
 			Text: e.i18n.T(MsgPermBtnAllow), Type: "primary", Value: "perm:allow",
 			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllow), "green"),
@@ -10845,16 +10849,11 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 			Text: e.i18n.T(MsgPermBtnDeny), Type: "danger", Value: "perm:deny",
 			Extra: extra("❌ "+e.i18n.T(MsgPermBtnDeny), "red"),
 		}
-		allowAllBtn := CardButton{
-			Text: e.i18n.T(MsgPermBtnAllowAll), Type: "default", Value: "perm:allow_all",
-			Extra: extra("✅ "+e.i18n.T(MsgPermBtnAllowAll), "green"),
-		}
 
 		card := NewCard().
 			Title(e.i18n.T(MsgPermCardTitle), "orange").
 			Markdown(body).
-			ButtonsEqual(allowBtn, denyBtn).
-			Buttons(allowAllBtn).
+			ButtonsEqual(allowAllBtn, allowBtn, denyBtn).
 			Note(e.i18n.T(MsgPermCardNote)).
 			Build()
 		e.sendWithCard(p, replyCtx, card)
