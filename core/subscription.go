@@ -556,8 +556,8 @@ func (sm *SubscriptionManager) executeScan(subID string) {
 	}()
 
 	var err error
-	if sub.TimeoutMins > 0 {
-		timeout := time.Duration(sub.TimeoutMins) * time.Minute
+	if snapshot.TimeoutMins > 0 {
+		timeout := time.Duration(snapshot.TimeoutMins) * time.Minute
 		select {
 		case err = <-done:
 		case <-time.After(timeout):
