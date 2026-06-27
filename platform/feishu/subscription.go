@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
@@ -99,7 +98,7 @@ func (p *Platform) ListMessages(ctx context.Context, chatID string, opts core.Li
 
 	var nextToken string
 	if resp.Data.PageToken != nil {
-		nextToken = *resp.Data.PageToken
+		nextToken = stringValue(resp.Data.PageToken)
 	}
 
 	return messages, nextToken, nil
@@ -107,8 +106,7 @@ func (p *Platform) ListMessages(ctx context.Context, chatID string, opts core.Li
 
 // BuildThreadReplyCtx constructs a replyContext targeting a specific message
 // for reply-in-thread. It implements core.ThreadReplyContextBuilder.
-func (p *Platform) BuildThreadReplyCtx(chatID string, messageID string) (any, error) {
-	sessionKey := fmt.Sprintf("%s:%s", p.platformName, chatID)
+func (p *Platform) BuildThreadReplyCtx(sessionKey string, chatID string, messageID string) (any, error) {
 	return replyContext{chatID: chatID, messageID: messageID, sessionKey: sessionKey}, nil
 }
 
@@ -116,37 +114,19 @@ func (p *Platform) BuildThreadReplyCtx(chatID string, messageID string) (any, er
 // based on the message type. For unhandled types it returns a placeholder.
 func extractPlainText(msgType, content string) string {
 	switch msgType {
+	case "interactive":
+		return extractInteractiveCardText(content)
+	case "post":
+		return extractPostPlainText(content)
 	case "text":
 		var body struct {
 			Text string `json:"text"`
 		}
-		if err := json.Unmarshal([]byte(content), &body); err == nil {
+		if json.Unmarshal([]byte(content), &body) == nil && body.Text != "" {
 			return body.Text
 		}
-	case "post":
-		var post struct {
-			Content [][]struct {
-				Tag  string `json:"tag"`
-				Text string `json:"text"`
-			} `json:"content"`
-		}
-		if err := json.Unmarshal([]byte(content), &post); err == nil {
-			var lines []string
-			for _, para := range post.Content {
-				var line strings.Builder
-				for _, elem := range para {
-					if elem.Tag == "text" {
-						line.WriteString(elem.Text)
-					}
-				}
-				if line.Len() > 0 {
-					lines = append(lines, line.String())
-				}
-			}
-			return strings.Join(lines, "\n")
-		}
+		return content
 	default:
-		return fmt.Sprintf("[%s]", msgType)
+		return content
 	}
-	return ""
 }

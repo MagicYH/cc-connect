@@ -15,7 +15,7 @@ func TestSubscriptionInterfaceCompliance(t *testing.T) {
 func TestBuildThreadReplyCtx(t *testing.T) {
 	p := &Platform{platformName: "feishu"}
 
-	result, err := p.BuildThreadReplyCtx("oc_123", "om_456")
+	result, err := p.BuildThreadReplyCtx("feishu:oc_123:bot_abc", "oc_123", "om_456")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,9 +31,8 @@ func TestBuildThreadReplyCtx(t *testing.T) {
 	if rc.messageID != "om_456" {
 		t.Errorf("messageID: got %q, want %q", rc.messageID, "om_456")
 	}
-	wantKey := "feishu:oc_123"
-	if rc.sessionKey != wantKey {
-		t.Errorf("sessionKey: got %q, want %q", rc.sessionKey, wantKey)
+	if rc.sessionKey != "feishu:oc_123:bot_abc" {
+		t.Errorf("sessionKey: got %q, want %q", rc.sessionKey, "feishu:oc_123:bot_abc")
 	}
 }
 
@@ -51,22 +50,28 @@ func TestExtractPlainText(t *testing.T) {
 			want:    "hello world",
 		},
 		{
-			name:    "post message",
+			name:    "post message delegates to extractPostPlainText",
 			msgType: "post",
-			content: `{"content":[[{"tag":"text","text":"line1"},{"tag":"at","user_id":"u1"}],[{"tag":"text","text":"line2"}]]}`,
-			want:    "line1\nline2",
+			content: `{"zh_cn":{"title":"Hello","content":[[{"tag":"text","text":"line1"}]]}}`,
+			want:    "Hello\nline1",
 		},
 		{
-			name:    "image message",
+			name:    "unknown message type returns raw content",
 			msgType: "image",
 			content: `{"image_key":"img1"}`,
-			want:    "[image]",
+			want:    `{"image_key":"img1"}`,
 		},
 		{
-			name:    "empty text",
+			name:    "empty text returns raw content",
 			msgType: "text",
 			content: `{"text":""}`,
-			want:    "",
+			want:    `{"text":""}`,
+		},
+		{
+			name:    "interactive delegates to extractInteractiveCardText",
+			msgType: "interactive",
+			content: `{"config":{},"elements":[{"tag":"div","text":{"tag":"plain_text","content":"card text"}}]}`,
+			want:    "card text",
 		},
 	}
 
