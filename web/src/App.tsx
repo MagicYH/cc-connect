@@ -8,6 +8,7 @@ import ProjectDetail from '@/pages/Projects/ProjectDetail';
 import ChatList from '@/pages/Chat/ChatList';
 import ChatView from '@/pages/Chat/ChatView';
 import CronList from '@/pages/Cron/CronList';
+import SubscriptionList from '@/pages/Subscriptions/SubscriptionList';
 import SystemConfig from '@/pages/System/Config';
 import ProviderList from '@/pages/Providers/ProviderList';
 import SkillList from '@/pages/Skills/SkillList';
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="chat" element={<ChatList />} />
         <Route path="chat/:name" element={<ChatView />} />
         <Route path="cron" element={<CronList />} />
+        <Route path="subscriptions" element={<SubscriptionList />} />
         <Route path="system" element={<SystemConfig />} />
       </Route>
     </Routes>
