@@ -31,6 +31,37 @@ type MessageRecallDetector interface {
 	IsMessageRecalled(ctx context.Context, replyCtx any) (bool, error)
 }
 
+// ScannedMessage represents a message retrieved from a platform's message history.
+type ScannedMessage struct {
+	MessageID string
+	ChatID    string
+	UserID    string
+	IsBot     bool
+	IsCard    bool
+	MsgType   string
+	Content   string // human-readable text; for card messages, platforms must extract text internally
+	CreatedAt time.Time
+}
+
+// ListMessagesOptions configures a message history listing request.
+type ListMessagesOptions struct {
+	Since     time.Time
+	PageSize  int
+	PageToken string
+}
+
+// MessageScanner is an optional interface for platforms that support
+// retrieving message history from a chat.
+type MessageScanner interface {
+	ListMessages(ctx context.Context, chatID string, opts ListMessagesOptions) ([]ScannedMessage, string, error)
+}
+
+// ThreadReplyContextBuilder is an optional interface for platforms that can
+// construct a reply context targeting a specific message for reply-in-thread.
+type ThreadReplyContextBuilder interface {
+	BuildThreadReplyCtx(chatID string, messageID string) (any, error)
+}
+
 // CronReplyTargetResolver is an optional interface for platforms that need to
 // map a logical cron session key to the actual reply target used at execution
 // time. This is useful for platforms where proactive replies may need to create
