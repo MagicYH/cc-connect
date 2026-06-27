@@ -568,7 +568,7 @@ func (sm *SubscriptionManager) executeScan(subID string) {
 	}
 
 	if err != nil {
-		sm.store.MarkRun(subID, err.Error(), true)
+		sm.store.MarkRun(subID, err.Error(), isPermanentError(err))
 		slog.Error("subscription: scan failed", "id", subID, "error", err)
 	} else {
 		sm.store.MarkRun(subID, "", false)
@@ -609,4 +609,25 @@ func (sm *SubscriptionManager) AppendLog(entry LogEntry) error {
 	defer f.Close()
 	_, err = fmt.Fprintln(f, string(data))
 	return err
+}
+
+// UpdateAnchor delegates to the underlying store's UpdateAnchor method.
+func (sm *SubscriptionManager) UpdateAnchor(id, anchor string, processedIDs []string) error {
+	return sm.store.UpdateAnchor(id, anchor, processedIDs)
+}
+
+// isPermanentError classifies an error as permanent (auth, permissions, bot removed)
+// vs transient (rate limit, network timeout).
+func isPermanentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	permanentMarkers := []string{"permission", "not exist", "token", "unauthorized", "forbidden"}
+	for _, marker := range permanentMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

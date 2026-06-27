@@ -885,6 +885,8 @@ func (e *Engine) SetCronScheduler(cs *CronScheduler) {
 	e.cronScheduler = cs
 }
 
+// SetSubscriptionManager sets the subscription manager. Must be called before
+// SubscriptionManager.Start() to avoid races with scheduled scans.
 func (e *Engine) SetSubscriptionManager(sm *SubscriptionManager) {
 	e.subscriptionManager = sm
 }
@@ -16236,9 +16238,17 @@ func lastActiveToolSummary(steps []ToolStep) string {
 //  3. List messages from the platform (with pagination)
 //  4. Filter messages using the subscription's filter/exclude/processedIDs
 //  5. For each matched message, build a prompt, resolve reply context, and
-//     inject into an agent session
+//     inject into an agent session (synchronous, respecting ConcurrencyLimit)
 //  6. Update the anchor and processed IDs
 func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
+	// Emit hook event
+	e.hooks.Emit(HookEvent{
+		Event:      HookEventSubscriptionTriggered,
+		SessionKey: sub.SessionKey,
+		Content:    sub.Prompt,
+		Extra:      map[string]any{"subscription_id": sub.ID},
+	})
+
 	// 1. Resolve platform
 	sessionKey := sub.SessionKey
 	platformName := ""
@@ -16253,6 +16263,19 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 			break
 		}
 	}
+	// Fallback: in multi-workspace mode the stored session key may be prefixed
+	// with the workspace path (e.g. "/home/user/project:feishu:C123:U456").
+	if targetPlatform == nil {
+		for _, p := range e.platforms {
+			needle := ":" + p.Name() + ":"
+			if idx := strings.Index(sessionKey, needle); idx >= 0 {
+				targetPlatform = p
+				platformName = p.Name()
+				sessionKey = sessionKey[idx+1:] // strip workspace prefix
+				break
+			}
+		}
+	}
 	if targetPlatform == nil {
 		return fmt.Errorf("subscription: platform %q not found for session %q", platformName, sessionKey)
 	}
@@ -16263,35 +16286,32 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 		return fmt.Errorf("subscription: platform %q does not support MessageScanner", platformName)
 	}
 
-	// 3. List messages with pagination
+	// Resolve workspace context
+	agent := e.agent
+	sessions := e.sessions
+	workspaceDir := ""
+	if e.multiWorkspace {
+		channelID := extractChannelID(sessionKey)
+		if channelID != "" {
+			workspace, _, err := e.resolveWorkspace(targetPlatform, channelID)
+			if err == nil && workspace != "" {
+				wsAgent, wsSessions, _, effectiveDir, wsErr := e.workspaceContext(workspace, sessionKey)
+				if wsErr == nil {
+					agent = wsAgent
+					sessions = wsSessions
+					workspaceDir = effectiveDir
+				}
+			}
+		}
+	}
+
+	// 3. List messages with pagination (bounded)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	var allMsgs []ScannedMessage
-	opts := ListMessagesOptions{
-		PageSize: 50,
-	}
-	if sub.Anchor != "" {
-		if ts, err := time.Parse(time.RFC3339Nano, sub.Anchor); err == nil {
-			opts.Since = ts
-		} else {
-			// Fallback: 2-minute lookback for empty/invalid anchor
-			opts.Since = time.Now().Add(-2 * time.Minute)
-		}
-	} else {
-		opts.Since = time.Now().Add(-2 * time.Minute)
-	}
-
-	for {
-		msgs, nextToken, err := scanner.ListMessages(ctx, sub.ChatID, opts)
-		if err != nil {
-			return fmt.Errorf("subscription: list messages: %w", err)
-		}
-		allMsgs = append(allMsgs, msgs...)
-		if nextToken == "" {
-			break
-		}
-		opts.PageToken = nextToken
+	allMsgs, err := listAllMessages(ctx, scanner, sub.ChatID, sub.Anchor, sub.ID)
+	if err != nil {
+		return err
 	}
 
 	// 4. Filter messages
@@ -16303,13 +16323,29 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 
 	slog.Info("subscription: matched messages", "subscription_id", sub.ID, "matched", len(matched), "total_scanned", len(allMsgs))
 
-	// 5. Inject matched messages into agent sessions
+	// 5. Inject matched messages into agent sessions (synchronous)
 	threadBuilder, hasThreadBuilder := targetPlatform.(ThreadReplyContextBuilder)
 
 	var newProcessedIDs []string
 	newProcessedIDs = append(newProcessedIDs, sub.ProcessedIDs...)
 
-	for _, msg := range matched {
+	var (
+		wg          sync.WaitGroup
+		queuedCount int
+	)
+
+	for i, msg := range matched {
+		// ConcurrencyLimit check
+		if sub.ConcurrencyLimit > 0 {
+			activeCount := len(sessions.ListSessions(sub.SessionKey))
+			if activeCount >= sub.ConcurrencyLimit {
+				queuedCount = len(matched) - i
+				slog.Warn("subscription: concurrency limit reached, queuing remaining messages",
+					"subscription_id", sub.ID, "active", activeCount, "limit", sub.ConcurrencyLimit, "queued", queuedCount)
+				break
+			}
+		}
+
 		// Build reply context: prefer thread reply, then fallback to reconstruct
 		var replyCtx any
 		if hasThreadBuilder {
@@ -16328,13 +16364,16 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 		prompt := sub.BuildPrompt(msg.Content)
 
 		// Create a side session for this subscription message (like cron)
-		session := e.sessions.NewSideSession(sub.SessionKey, "subscription-"+sub.ID)
+		session := sessions.NewSideSession(sub.SessionKey, "subscription-"+sub.ID)
 		if !session.TryLock() {
 			slog.Warn("subscription: session busy, skipping message", "subscription_id", sub.ID, "message_id", msg.MessageID)
 			continue
 		}
 
 		iKey := fmt.Sprintf("%s#subscription:%s", sub.SessionKey, session.ID)
+		if workspaceDir != "" {
+			iKey = workspaceDir + ":" + iKey
+		}
 
 		// Log the injection
 		if e.subscriptionManager != nil {
@@ -16342,7 +16381,7 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 				SubscriptionID: sub.ID,
 				MessageID:      msg.MessageID,
 				ChatID:         sub.ChatID,
-				Content:        truncateString(msg.Content, 200),
+				Content:        truncateStr(msg.Content, 200),
 				SessionID:      session.ID,
 				Status:         "submitted",
 				CreatedAt:      time.Now(),
@@ -16353,8 +16392,10 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 
 		newProcessedIDs = append(newProcessedIDs, msg.MessageID)
 
-		// Inject the message into the agent session (fire-and-forget goroutine)
+		// Inject the message into the agent session (synchronous via WaitGroup)
+		wg.Add(1)
 		go func(p Platform, prompt string, replyCtx any, session *Session, iKey string, sessionKey string) {
+			defer wg.Done()
 			msg := &Message{
 				Content:    prompt,
 				ReplyCtx:   replyCtx,
@@ -16362,43 +16403,67 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 				UserID:     "subscription",
 				UserName:   "subscription",
 			}
-			e.processInteractiveMessageWith(p, msg, session, e.agent, e.sessions, iKey, "", sessionKey)
-			session.Unlock()
+			e.processInteractiveMessageWith(p, msg, session, agent, sessions, iKey, workspaceDir, sessionKey)
 			e.cleanupInteractiveState(iKey)
 		}(targetPlatform, prompt, replyCtx, session, iKey, sub.SessionKey)
 	}
+	wg.Wait()
 
 	// 6. Update anchor and processed IDs
 	if len(allMsgs) > 0 {
-		lastMsg := allMsgs[len(allMsgs)-1]
-		newAnchor := lastMsg.CreatedAt.Format(time.RFC3339Nano)
+		var maxTime time.Time
+		for _, msg := range allMsgs {
+			if msg.CreatedAt.After(maxTime) {
+				maxTime = msg.CreatedAt
+			}
+		}
+		newAnchor := maxTime.Format(time.RFC3339Nano)
 		if e.subscriptionManager != nil {
-			if err := e.subscriptionManager.store.UpdateAnchor(sub.ID, newAnchor, newProcessedIDs); err != nil {
+			if err := e.subscriptionManager.UpdateAnchor(sub.ID, newAnchor, newProcessedIDs); err != nil {
 				slog.Error("subscription: failed to update anchor", "subscription_id", sub.ID, "error", err)
 			}
 		}
 	}
 
+	slog.Info("subscription: scan completed",
+		"subscription_id", sub.ID, "chat_id", sub.ChatID, "project", sub.Project,
+		"total", len(allMsgs), "matched", len(matched), "submitted", len(matched)-queuedCount, "queued", queuedCount)
+
 	return nil
 }
 
-// isPermanentError classifies an error as permanent (auth, permissions, bot removed)
-// vs transient (rate limit, network timeout).
-func isPermanentError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	permanentMarkers := []string{"permission", "not exist", "token", "unauthorized", "forbidden"}
-	for _, marker := range permanentMarkers {
-		if strings.Contains(msg, marker) {
-			return true
+// listAllMessages paginates through a MessageScanner to collect all messages.
+// It respects a maximum of 100 pages to prevent unbounded loops.
+func listAllMessages(ctx context.Context, scanner MessageScanner, chatID, anchor, subID string) ([]ScannedMessage, error) {
+	opts := ListMessagesOptions{
+		PageSize: 50,
+		Anchor:   anchor,
+	}
+	if anchor != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, anchor); err == nil {
+			opts.Since = ts
+		} else {
+			opts.Since = time.Now().Add(-2 * time.Minute)
 		}
+	} else {
+		opts.Since = time.Now().Add(-2 * time.Minute)
 	}
-	return false
-}
 
-// truncateString truncates a string to at most n bytes.
-func truncateString(s string, n int) string {
-	if len(s) <= n {
-		return s
+	const maxPages = 100
+	var allMsgs []ScannedMessage
+	for page := 0; page < maxPages; page++ {
+		msgs, nextToken, err := scanner.ListMessages(ctx, chatID, opts)
+		if err != nil {
+			return nil, fmt.Errorf("subscription: list messages: %w", err)
+		}
+		allMsgs = append(allMsgs, msgs...)
+		if nextToken == "" {
+			break
+		}
+		opts.PageToken = nextToken
 	}
-	return s[:n]
+	if opts.PageToken != "" {
+		slog.Warn("subscription: pagination limit reached", "subscription_id", subID, "pages", maxPages)
+	}
+	return allMsgs, nil
 }

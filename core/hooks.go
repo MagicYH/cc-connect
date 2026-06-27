@@ -17,14 +17,15 @@ import (
 type HookEventType string
 
 const (
-	HookEventMessageReceived    HookEventType = "message.received"
-	HookEventMessageSent        HookEventType = "message.sent"
-	HookEventSessionStarted     HookEventType = "session.started"
-	HookEventSessionEnded       HookEventType = "session.ended"
-	HookEventCronTriggered      HookEventType = "cron.triggered"
-	HookEventTimerTriggered     HookEventType = "timer.triggered"
-	HookEventPermissionRequested HookEventType = "permission.requested"
-	HookEventError              HookEventType = "error"
+	HookEventMessageReceived       HookEventType = "message.received"
+	HookEventMessageSent           HookEventType = "message.sent"
+	HookEventSessionStarted        HookEventType = "session.started"
+	HookEventSessionEnded          HookEventType = "session.ended"
+	HookEventCronTriggered         HookEventType = "cron.triggered"
+	HookEventTimerTriggered        HookEventType = "timer.triggered"
+	HookEventPermissionRequested   HookEventType = "permission.requested"
+	HookEventSubscriptionTriggered HookEventType = "subscription.triggered"
+	HookEventError                 HookEventType = "error"
 )
 
 // HookHandlerType is the execution strategy for a hook.
@@ -38,7 +39,7 @@ const (
 // HookConfig is the user-facing configuration for a single hook rule.
 type HookConfig struct {
 	Event   string `toml:"event" json:"event"`
-	Type    string `toml:"type" json:"type"`       // "command" or "http"
+	Type    string `toml:"type" json:"type"` // "command" or "http"
 	Command string `toml:"command" json:"command,omitempty"`
 	URL     string `toml:"url" json:"url,omitempty"`
 	Timeout int    `toml:"timeout" json:"timeout,omitempty"` // seconds; 0 = default (10s cmd, 5s http)
@@ -75,13 +76,13 @@ type HookEvent struct {
 
 // HookManager dispatches lifecycle events to configured hook handlers.
 type HookManager struct {
-	hooks       []HookConfig
-	project     string
-	shell       string // shell binary (e.g. "sh", "/bin/zsh")
-	shellFlag   string // shell flag (e.g. "-c", "-Command")
+	hooks        []HookConfig
+	project      string
+	shell        string // shell binary (e.g. "sh", "/bin/zsh")
+	shellFlag    string // shell flag (e.g. "-c", "-Command")
 	shellProfile string // prepended to every command
-	mu          sync.RWMutex
-	client      *http.Client
+	mu           sync.RWMutex
+	client       *http.Client
 }
 
 // NewHookManager creates a manager for the given project name.
@@ -95,12 +96,12 @@ func NewHookManager(project string, hooks []HookConfig, shell, shellFlag, shellP
 		valid = append(valid, h)
 	}
 	return &HookManager{
-		hooks:       valid,
-		project:     project,
-		shell:       shell,
-		shellFlag:   shellFlag,
+		hooks:        valid,
+		project:      project,
+		shell:        shell,
+		shellFlag:    shellFlag,
 		shellProfile: shellProfile,
-		client:      &http.Client{},
+		client:       &http.Client{},
 	}
 }
 
@@ -182,7 +183,8 @@ func (hm *HookManager) executeCommand(h *HookConfig, event HookEvent) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		slog.Warn("hooks: command failed",
+		slog.Warn(
+			"hooks: command failed",
 			"project", hm.project, "event", event.Event,
 			"command", truncateStr(h.Command, 80),
 			"error", err,
@@ -190,7 +192,8 @@ func (hm *HookManager) executeCommand(h *HookConfig, event HookEvent) {
 		)
 		return
 	}
-	slog.Debug("hooks: command executed",
+	slog.Debug(
+		"hooks: command executed",
 		"project", hm.project, "event", event.Event,
 		"command", truncateStr(h.Command, 80),
 	)
@@ -218,7 +221,8 @@ func (hm *HookManager) executeHTTP(h *HookConfig, event HookEvent) {
 
 	resp, err := hm.client.Do(req)
 	if err != nil {
-		slog.Warn("hooks: http request failed",
+		slog.Warn(
+			"hooks: http request failed",
 			"project", hm.project, "event", event.Event,
 			"url", h.URL, "error", err,
 		)
@@ -227,13 +231,15 @@ func (hm *HookManager) executeHTTP(h *HookConfig, event HookEvent) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		slog.Warn("hooks: http response error",
+		slog.Warn(
+			"hooks: http response error",
 			"project", hm.project, "event", event.Event,
 			"url", h.URL, "status", resp.StatusCode,
 		)
 		return
 	}
-	slog.Debug("hooks: http delivered",
+	slog.Debug(
+		"hooks: http delivered",
 		"project", hm.project, "event", event.Event,
 		"url", h.URL, "status", resp.StatusCode,
 	)
