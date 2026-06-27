@@ -378,31 +378,31 @@ const (
 	MsgCronIDLabel               MsgKey = "cron_id_label"
 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
 
-	MsgTimerNotAvailable  MsgKey = "timer_not_available"
-	MsgTimerUsage         MsgKey = "timer_usage"
-	MsgTimerAddUsage      MsgKey = "timer_add_usage"
-	MsgTimerAdded         MsgKey = "timer_added"
-	MsgTimerAddedExec     MsgKey = "timer_added_exec"
-	MsgTimerAddExecUsage  MsgKey = "timer_addexec_usage"
-	MsgTimerEmpty         MsgKey = "timer_empty"
-	MsgTimerListTitle     MsgKey = "timer_list_title"
-	MsgTimerListFooter    MsgKey = "timer_list_footer"
-	MsgTimerDelUsage      MsgKey = "timer_del_usage"
-	MsgTimerMuteUsage     MsgKey = "timer_mute_usage"
-	MsgTimerDeleted       MsgKey = "timer_deleted"
-	MsgTimerNotFound      MsgKey = "timer_not_found"
-	MsgTimerMuted         MsgKey = "timer_muted"
-	MsgTimerUnmuted       MsgKey = "timer_unmuted"
-	MsgTimerCardHint      MsgKey = "timer_card_hint"
-	MsgTimerBtnMute       MsgKey = "timer_btn_mute"
-	MsgTimerBtnUnmute     MsgKey = "timer_btn_unmute"
-	MsgTimerBtnDelete     MsgKey = "timer_btn_delete"
-	MsgTimerIDLabel       MsgKey = "timer_id_label"
-	MsgTimerScheduledLabel MsgKey = "timer_scheduled_label"
-	MsgTimerFailedSuffix  MsgKey = "timer_failed_suffix"
-	MsgCommandsTagAgent          MsgKey = "commands_tag_agent"
-	MsgCommandsTagShell          MsgKey = "commands_tag_shell"
-	MsgUpgradeTimeoutSuffix      MsgKey = "upgrade_timeout_suffix"
+	MsgTimerNotAvailable    MsgKey = "timer_not_available"
+	MsgTimerUsage           MsgKey = "timer_usage"
+	MsgTimerAddUsage        MsgKey = "timer_add_usage"
+	MsgTimerAdded           MsgKey = "timer_added"
+	MsgTimerAddedExec       MsgKey = "timer_added_exec"
+	MsgTimerAddExecUsage    MsgKey = "timer_addexec_usage"
+	MsgTimerEmpty           MsgKey = "timer_empty"
+	MsgTimerListTitle       MsgKey = "timer_list_title"
+	MsgTimerListFooter      MsgKey = "timer_list_footer"
+	MsgTimerDelUsage        MsgKey = "timer_del_usage"
+	MsgTimerMuteUsage       MsgKey = "timer_mute_usage"
+	MsgTimerDeleted         MsgKey = "timer_deleted"
+	MsgTimerNotFound        MsgKey = "timer_not_found"
+	MsgTimerMuted           MsgKey = "timer_muted"
+	MsgTimerUnmuted         MsgKey = "timer_unmuted"
+	MsgTimerCardHint        MsgKey = "timer_card_hint"
+	MsgTimerBtnMute         MsgKey = "timer_btn_mute"
+	MsgTimerBtnUnmute       MsgKey = "timer_btn_unmute"
+	MsgTimerBtnDelete       MsgKey = "timer_btn_delete"
+	MsgTimerIDLabel         MsgKey = "timer_id_label"
+	MsgTimerScheduledLabel  MsgKey = "timer_scheduled_label"
+	MsgTimerFailedSuffix    MsgKey = "timer_failed_suffix"
+	MsgCommandsTagAgent     MsgKey = "commands_tag_agent"
+	MsgCommandsTagShell     MsgKey = "commands_tag_shell"
+	MsgUpgradeTimeoutSuffix MsgKey = "upgrade_timeout_suffix"
 
 	MsgCronScheduleLabel MsgKey = "cron_schedule_label"
 	MsgCronNextRunLabel  MsgKey = "cron_next_run_label"
@@ -646,6 +646,24 @@ const (
 	MsgWsInitInvalidTarget      MsgKey = "ws_init_invalid_target"
 	MsgWsInitLocalPathsDisabled MsgKey = "ws_init_local_paths_disabled"
 	MsgBackgroundAutoDenied     MsgKey = "background_auto_denied"
+
+	// Subscription messages
+	MsgSubNotAvailable  MsgKey = "sub_not_available"
+	MsgSubUsage         MsgKey = "sub_usage"
+	MsgSubCreated       MsgKey = "sub_created"
+	MsgSubAlreadyExists MsgKey = "sub_already_exists"
+	MsgSubNotFound      MsgKey = "sub_not_found"
+	MsgSubListTitle     MsgKey = "sub_list_title"
+	MsgSubListAllTitle  MsgKey = "sub_list_all_title"
+	MsgSubEnabled       MsgKey = "sub_enabled"
+	MsgSubDisabled      MsgKey = "sub_disabled"
+	MsgSubDeleted       MsgKey = "sub_deleted"
+	MsgSubAutoDisabled  MsgKey = "sub_auto_disabled"
+	MsgSubDelConfirm    MsgKey = "sub_del_confirm"
+	MsgSubShowFormat    MsgKey = "sub_show_format"
+	MsgSubEditUsage     MsgKey = "sub_edit_usage"
+	MsgSubHelp          MsgKey = "sub_help"
+	MsgSubAdminRequired MsgKey = "sub_admin_required"
 )
 
 var messages = map[MsgKey]map[Language]string{
@@ -4191,6 +4209,164 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "`/workspace init` 未啟用本機目錄目標。請使用 git 倉庫地址，或在此專案配置 `workspace_init_allow_local_paths = true`。",
 		LangJapanese:           "`/workspace init` ではローカルディレクトリ対象が無効です。git URL を使うか、このプロジェクトで `workspace_init_allow_local_paths = true` を有効にしてください。",
 		LangSpanish:            "Los destinos de directorio local están deshabilitados para `/workspace init`. Use una URL de git o habilite `workspace_init_allow_local_paths = true` para este proyecto.",
+	},
+
+	MsgSubNotAvailable: {
+		LangEnglish:            "Subscription feature is not available.",
+		LangChinese:            "订阅功能不可用。",
+		LangTraditionalChinese: "訂閱功能不可用。",
+		LangJapanese:           "サブスクリプション機能は利用できません。",
+		LangSpanish:            "La función de suscripción no está disponible.",
+	},
+	MsgSubUsage: {
+		LangEnglish:            "Usage: /subscribe <filter> <exclude> [prompt...]",
+		LangChinese:            "用法：/subscribe <过滤词> <排除词> [提示词...]",
+		LangTraditionalChinese: "用法：/subscribe <過濾詞> <排除詞> [提示詞...]",
+		LangJapanese:           "使い方: /subscribe <フィルター> <除外> [プロンプト...]",
+		LangSpanish:            "Uso: /subscribe <filtro> <excluir> [prompt...]",
+	},
+	MsgSubCreated: {
+		LangEnglish:            "Subscription created (ID: %s)\nFilter: %s | Exclude: %s\nPrompt: %s\nInterval: %s\nTip: Use {{content}} in prompt to reference the matched message.",
+		LangChinese:            "订阅已创建（ID: %s）\n过滤词: %s | 排除词: %s\n提示词: %s\n间隔: %s\n提示：在提示词中使用 {{content}} 来引用匹配的消息。",
+		LangTraditionalChinese: "訂閱已建立（ID: %s）\n過濾詞: %s | 排除詞: %s\n提示詞: %s\n間隔: %s\n提示：在提示詞中使用 {{content}} 來引用匹配的訊息。",
+		LangJapanese:           "サブスクリプション作成完了 (ID: %s)\nフィルター: %s | 除外: %s\nプロンプト: %s\n間隔: %s\nヒント: プロンプトで {{content}} を使って一致したメッセージを参照できます。",
+		LangSpanish:            "Suscripción creada (ID: %s)\nFiltro: %s | Excluir: %s\nPrompt: %s\nIntervalo: %s\nConsejo: Usa {{content}} en el prompt para referenciar el mensaje coincidente.",
+	},
+	MsgSubAlreadyExists: {
+		LangEnglish:            "This group is already subscribed. Use /subscribe edit to modify.",
+		LangChinese:            "该群已订阅，请使用 /subscribe edit 修改。",
+		LangTraditionalChinese: "該群已訂閱，請使用 /subscribe edit 修改。",
+		LangJapanese:           "このグループは既にサブスクリプションされています。/subscribe edit で変更してください。",
+		LangSpanish:            "Este grupo ya está suscrito. Use /subscribe edit para modificar.",
+	},
+	MsgSubNotFound: {
+		LangEnglish:            "Subscription not found: %s",
+		LangChinese:            "订阅未找到: %s",
+		LangTraditionalChinese: "訂閱未找到: %s",
+		LangJapanese:           "サブスクリプションが見つかりません: %s",
+		LangSpanish:            "Suscripción no encontrada: %s",
+	},
+	MsgSubListTitle: {
+		LangEnglish:            "Subscriptions for this group:",
+		LangChinese:            "本群订阅列表：",
+		LangTraditionalChinese: "本群訂閱列表：",
+		LangJapanese:           "このグループのサブスクリプション:",
+		LangSpanish:            "Suscripciones de este grupo:",
+	},
+	MsgSubListAllTitle: {
+		LangEnglish:            "All subscriptions:",
+		LangChinese:            "所有订阅：",
+		LangTraditionalChinese: "所有訂閱：",
+		LangJapanese:           "すべてのサブスクリプション:",
+		LangSpanish:            "Todas las suscripciones:",
+	},
+	MsgSubEnabled: {
+		LangEnglish:            "Subscription %s enabled.",
+		LangChinese:            "订阅 %s 已启用。",
+		LangTraditionalChinese: "訂閱 %s 已啟用。",
+		LangJapanese:           "サブスクリプション %s を有効にしました。",
+		LangSpanish:            "Suscripción %s habilitada.",
+	},
+	MsgSubDisabled: {
+		LangEnglish:            "Subscription %s disabled.",
+		LangChinese:            "订阅 %s 已禁用。",
+		LangTraditionalChinese: "訂閱 %s 已停用。",
+		LangJapanese:           "サブスクリプション %s を無効にしました。",
+		LangSpanish:            "Suscripción %s deshabilitada.",
+	},
+	MsgSubDeleted: {
+		LangEnglish:            "Subscription %s deleted.",
+		LangChinese:            "订阅 %s 已删除。",
+		LangTraditionalChinese: "訂閱 %s 已刪除。",
+		LangJapanese:           "サブスクリプション %s を削除しました。",
+		LangSpanish:            "Suscripción %s eliminada.",
+	},
+	MsgSubAutoDisabled: {
+		LangEnglish:            "Subscription %s auto-disabled after %d consecutive errors. Last error: %s. Use /subscribe enable %s to re-enable.",
+		LangChinese:            "订阅 %s 因连续 %d 次错误已自动禁用。最近错误: %s。使用 /subscribe enable %s 重新启用。",
+		LangTraditionalChinese: "訂閱 %s 因連續 %d 次錯誤已自動停用。最近錯誤: %s。使用 /subscribe enable %s 重新啟用。",
+		LangJapanese:           "サブスクリプション %s は連続 %d 回のエラーで自動無効化されました。最後のエラー: %s。/subscribe enable %s で再有効化できます。",
+		LangSpanish:            "Suscripción %s deshabilitada automáticamente después de %d errores consecutivos. Último error: %s. Use /subscribe enable %s para rehabilitar.",
+	},
+	MsgSubDelConfirm: {
+		LangEnglish:            "Are you sure you want to delete subscription %s?",
+		LangChinese:            "确定要删除订阅 %s 吗？",
+		LangTraditionalChinese: "確定要刪除訂閱 %s 嗎？",
+		LangJapanese:           "サブスクリプション %s を削除してもよろしいですか？",
+		LangSpanish:            "¿Está seguro de que desea eliminar la suscripción %s?",
+	},
+	MsgSubShowFormat: {
+		LangEnglish:            "Subscription: %s\nGroup: %s\nFilter: %s\nExclude: %s\nPrompt: %s\nInterval: %s\nEnabled: %v\nConsecutiveErrors: %d\nLastRun: %s\nLastError: %s\nAnchor: %s",
+		LangChinese:            "订阅: %s\n群组: %s\n过滤词: %s\n排除词: %s\n提示词: %s\n间隔: %s\n启用: %v\n连续错误: %d\n上次运行: %s\n最近错误: %s\n锚点: %s",
+		LangTraditionalChinese: "訂閱: %s\n群組: %s\n過濾詞: %s\n排除詞: %s\n提示詞: %s\n間隔: %s\n啟用: %v\n連續錯誤: %d\n上次執行: %s\n最近錯誤: %s\n錨點: %s",
+		LangJapanese:           "サブスクリプション: %s\nグループ: %s\nフィルター: %s\n除外: %s\nプロンプト: %s\n間隔: %s\n有効: %v\n連続エラー: %d\n最終実行: %s\n最終エラー: %s\nアンカー: %s",
+		LangSpanish:            "Suscripción: %s\nGrupo: %s\nFiltro: %s\nExcluir: %s\nPrompt: %s\nIntervalo: %s\nHabilitado: %v\nErrores consecutivos: %d\nÚltima ejecución: %s\nÚltimo error: %s\nAncla: %s",
+	},
+	MsgSubEditUsage: {
+		LangEnglish:            "Usage: /subscribe edit <id> <field> <value>",
+		LangChinese:            "用法：/subscribe edit <id> <字段> <值>",
+		LangTraditionalChinese: "用法：/subscribe edit <id> <欄位> <值>",
+		LangJapanese:           "使い方: /subscribe edit <id> <フィールド> <値>",
+		LangSpanish:            "Uso: /subscribe edit <id> <campo> <valor>",
+	},
+	MsgSubHelp: {
+		LangEnglish: "Subscription Commands:\n" +
+			"/subscribe <filter> <exclude> [prompt...] - Create subscription\n" +
+			"/subscribe list - List subscriptions for this group\n" +
+			"/subscribe list all - List all subscriptions\n" +
+			"/subscribe show <id> - Show subscription details\n" +
+			"/subscribe edit <id> <field> <value> - Edit subscription\n" +
+			"/subscribe enable <id> - Enable subscription\n" +
+			"/subscribe disable <id> - Disable subscription\n" +
+			"/subscribe del <id> - Delete subscription\n\n" +
+			"Tip: Use {{content}} in prompt to reference the matched message. Use \"-\" for filter/exclude to match all messages.",
+		LangChinese: "订阅命令：\n" +
+			"/subscribe <过滤词> <排除词> [提示词...] - 创建订阅\n" +
+			"/subscribe list - 查看本群订阅\n" +
+			"/subscribe list all - 查看所有订阅\n" +
+			"/subscribe show <id> - 查看订阅详情\n" +
+			"/subscribe edit <id> <字段> <值> - 编辑订阅\n" +
+			"/subscribe enable <id> - 启用订阅\n" +
+			"/subscribe disable <id> - 禁用订阅\n" +
+			"/subscribe del <id> - 删除订阅\n\n" +
+			"提示：在提示词中使用 {{content}} 引用匹配的消息。过滤词/排除词用 \"-\" 表示匹配所有。",
+		LangTraditionalChinese: "訂閱命令：\n" +
+			"/subscribe <過濾詞> <排除詞> [提示詞...] - 建立訂閱\n" +
+			"/subscribe list - 查看本群訂閱\n" +
+			"/subscribe list all - 查看所有訂閱\n" +
+			"/subscribe show <id> - 查看訂閱詳情\n" +
+			"/subscribe edit <id> <欄位> <值> - 編輯訂閱\n" +
+			"/subscribe enable <id> - 啟用訂閱\n" +
+			"/subscribe disable <id> - 停用訂閱\n" +
+			"/subscribe del <id> - 刪除訂閱\n\n" +
+			"提示：在提示詞中使用 {{content}} 引用匹配的訊息。過濾詞/排除詞用 \"-\" 表示匹配所有。",
+		LangJapanese: "サブスクリプションコマンド:\n" +
+			"/subscribe <フィルター> <除外> [プロンプト...] - 作成\n" +
+			"/subscribe list - このグループのサブスクリプション\n" +
+			"/subscribe list all - すべてのサブスクリプション\n" +
+			"/subscribe show <id> - 詳細表示\n" +
+			"/subscribe edit <id> <フィールド> <値> - 編集\n" +
+			"/subscribe enable <id> - 有効化\n" +
+			"/subscribe disable <id> - 無効化\n" +
+			"/subscribe del <id> - 削除\n\n" +
+			"ヒント: プロンプトで {{content}} を使って一致したメッセージを参照できます。フィルター/除外に \"-\" を指定すると全メッセージに一致します。",
+		LangSpanish: "Comandos de suscripción:\n" +
+			"/subscribe <filtro> <excluir> [prompt...] - Crear\n" +
+			"/subscribe list - Ver suscripciones del grupo\n" +
+			"/subscribe list all - Ver todas\n" +
+			"/subscribe show <id> - Ver detalles\n" +
+			"/subscribe edit <id> <campo> <valor> - Editar\n" +
+			"/subscribe enable <id> - Habilitar\n" +
+			"/subscribe disable <id> - Deshabilitar\n" +
+			"/subscribe del <id> - Eliminar\n\n" +
+			"Consejo: Usa {{content}} en el prompt para referenciar el mensaje. Usa \"-\" para filtro/excluir y coincidir con todo.",
+	},
+	MsgSubAdminRequired: {
+		LangEnglish:            "Only admins can manage subscriptions.",
+		LangChinese:            "仅管理员可以管理订阅。",
+		LangTraditionalChinese: "僅管理員可以管理訂閱。",
+		LangJapanese:           "管理者のみサブスクリプションを管理できます。",
+		LangSpanish:            "Solo los administradores pueden gestionar suscripciones.",
 	},
 }
 
