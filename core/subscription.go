@@ -394,7 +394,7 @@ type SubscriptionManager struct {
 func NewSubscriptionManager(store *SubscriptionStore, dataDir string) *SubscriptionManager {
 	return &SubscriptionManager{
 		store:   store,
-		cron:    cron.New(cron.WithSeconds()),
+		cron:    cron.New(),
 		engines: make(map[string]*Engine),
 		entries: make(map[string]cron.EntryID),
 		logsDir: filepath.Join(dataDir, "subscriptions", "logs"),
@@ -412,7 +412,9 @@ func (sm *SubscriptionManager) RegisterEngine(name string, e *Engine) {
 func (sm *SubscriptionManager) Start() error {
 	for _, sub := range sm.store.ListAll() {
 		if sub.Enabled {
-			sm.scheduleSubscription(sub)
+			if err := sm.scheduleSubscription(sub); err != nil {
+				slog.Warn("subscription: failed to schedule", "id", sub.ID, "error", err)
+			}
 		}
 	}
 	sm.cron.Start()
@@ -425,6 +427,14 @@ func (sm *SubscriptionManager) Stop() {
 }
 
 func (sm *SubscriptionManager) scheduleSubscription(sub *Subscription) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Remove existing schedule if any
+	if old, ok := sm.entries[sub.ID]; ok {
+		sm.cron.Remove(old)
+	}
+
 	entryID, err := sm.cron.AddFunc(sub.Interval, func() {
 		sm.executeScan(sub.ID)
 	})
@@ -448,11 +458,45 @@ func (sm *SubscriptionManager) AddSubscription(sub *Subscription) error {
 
 // RemoveSubscription removes a subscription and unschedules it.
 func (sm *SubscriptionManager) RemoveSubscription(id string) error {
+	sm.mu.Lock()
 	if entryID, ok := sm.entries[id]; ok {
 		sm.cron.Remove(entryID)
 		delete(sm.entries, id)
 	}
+	sm.mu.Unlock()
 	return sm.store.Remove(id)
+}
+
+// EnableSubscription enables a subscription and schedules it.
+func (sm *SubscriptionManager) EnableSubscription(id string) error {
+	sub := sm.store.Get(id)
+	if sub == nil {
+		return ErrSubscriptionNotFound
+	}
+	if err := sm.store.Update(id, map[string]any{"enabled": true}); err != nil {
+		return err
+	}
+	sub.Enabled = true
+	return sm.scheduleSubscription(sub)
+}
+
+// DisableSubscription disables a subscription and unschedules it.
+func (sm *SubscriptionManager) DisableSubscription(id string) error {
+	if err := sm.store.Update(id, map[string]any{"enabled": false}); err != nil {
+		return err
+	}
+	sm.mu.Lock()
+	if entryID, ok := sm.entries[id]; ok {
+		sm.cron.Remove(entryID)
+		delete(sm.entries, id)
+	}
+	sm.mu.Unlock()
+	return nil
+}
+
+// Store returns the underlying SubscriptionStore.
+func (sm *SubscriptionManager) Store() *SubscriptionStore {
+	return sm.store
 }
 
 func (sm *SubscriptionManager) executeScan(subID string) {
@@ -463,12 +507,15 @@ func (sm *SubscriptionManager) executeScan(subID string) {
 	if !sub.Enabled {
 		return
 	}
+	sm.mu.RLock()
 	engine, ok := sm.engines[sub.Project]
+	sm.mu.RUnlock()
 	if !ok {
 		slog.Error("subscription: engine not found", "subscription_id", subID, "project", sub.Project)
+		sm.store.MarkRun(subID, fmt.Sprintf("project %q not found", sub.Project), true)
 		return
 	}
-	engine.ExecuteSubscriptionScan(sub)
+	go engine.ExecuteSubscriptionScan(sub)
 }
 
 // AppendLog appends a log entry to the subscription's log file.
