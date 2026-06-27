@@ -1523,3 +1523,347 @@ func (s *paginatingScanner) ListMessages(_ context.Context, _ string, _ ListMess
 	s.callIdx++
 	return msgs, token, nil
 }
+
+// ---------------------------------------------------------------------------
+// Integration tests — full scan lifecycle
+// ---------------------------------------------------------------------------
+
+// integrationScannerPlatform implements Platform + MessageScanner +
+// ReplyContextReconstructor + ThreadReplyContextBuilder for integration tests.
+// It records all calls for assertion.
+type integrationScannerPlatform struct {
+	stubPlatformEngine
+	mu          sync.Mutex
+	messages    []ScannedMessage
+	listCalls   []string // chatIDs passed to ListMessages
+	rcCtx       any
+	threadCtx   any
+	threadCalls []string // messageIDs passed to BuildThreadReplyCtx
+}
+
+func (p *integrationScannerPlatform) ListMessages(_ context.Context, chatID string, _ ListMessagesOptions) ([]ScannedMessage, string, error) {
+	p.mu.Lock()
+	p.listCalls = append(p.listCalls, chatID)
+	p.mu.Unlock()
+	return p.messages, "", nil
+}
+
+func (p *integrationScannerPlatform) ReconstructReplyCtx(_ string) (any, error) {
+	return p.rcCtx, nil
+}
+
+func (p *integrationScannerPlatform) BuildThreadReplyCtx(_ string, _ string, messageID string) (any, error) {
+	p.mu.Lock()
+	p.threadCalls = append(p.threadCalls, messageID)
+	p.mu.Unlock()
+	return p.threadCtx, nil
+}
+
+func (p *integrationScannerPlatform) getListCalls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, len(p.listCalls))
+	copy(out, p.listCalls)
+	return out
+}
+
+func (p *integrationScannerPlatform) getThreadCalls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, len(p.threadCalls))
+	copy(out, p.threadCalls)
+	return out
+}
+
+// newIntegrationEnv creates a full test environment for subscription integration tests:
+// temp dir, SubscriptionStore, SubscriptionManager, Engine with scanner platform.
+func newIntegrationEnv(t *testing.T) (*SubscriptionManager, *Engine, *integrationScannerPlatform) {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	p := &integrationScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", ChatID: "chat1", Content: "alert: CPU high", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m2", ChatID: "chat1", Content: "info: daily report", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m3", ChatID: "chat1", Content: "alert: memory low", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m4", ChatID: "chat1", Content: "bot message", IsBot: true, CreatedAt: time.Now()},
+		},
+		rcCtx:     "reply-ctx-1",
+		threadCtx: "thread-ctx-1",
+	}
+
+	eng := NewEngine("proj1", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	eng.SetSubscriptionManager(sm)
+	sm.RegisterEngine("proj1", eng)
+
+	return sm, eng, p
+}
+
+// TestIntegration_SubscriptionFullScanCycle exercises the complete lifecycle:
+// create → schedule → scan → verify flow → disable → re-enable → cleanup.
+func TestIntegration_SubscriptionFullScanCycle(t *testing.T) {
+	sm, eng, p := newIntegrationEnv(t)
+
+	// 1. Create subscription with a filter
+	sub := &Subscription{
+		ID:               "sub-full",
+		Project:          "proj1",
+		ChatID:           "chat1",
+		Platform:         "feishu",
+		SessionKey:       "feishu:chat1:bot",
+		Filter:           "alert",
+		Prompt:           "investigate: {{content}}",
+		Interval:         "*/5 * * * *",
+		Enabled:          true,
+		ConcurrencyLimit: 5,
+		TimeoutMins:      1,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatalf("AddSubscription: %v", err)
+	}
+
+	// 2. Start the manager and verify cron entry exists
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sm.Stop()
+
+	sm.mu.RLock()
+	_, hasEntry := sm.entries["sub-full"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Error("enabled subscription should have a cron entry after Start")
+	}
+
+	// 3. Trigger scan via executeScan (synchronous, avoids goroutine timing)
+	//    Cancel the engine after a short delay so processInteractiveMessageWith exits.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		eng.Stop()
+	}()
+
+	sm.executeScan("sub-full")
+
+	// 4. Verify scan flow
+	//    a. ListMessages was called with correct chatID
+	listCalls := p.getListCalls()
+	if len(listCalls) == 0 {
+		t.Error("ListMessages should have been called")
+	} else if listCalls[0] != "chat1" {
+		t.Errorf("ListMessages called with chatID %q, want %q", listCalls[0], "chat1")
+	}
+
+	//    b. filterMessages was applied — only m1 and m3 match "alert" (m4 is bot, m2 doesn't match)
+	threadCalls := p.getThreadCalls()
+	if len(threadCalls) != 2 {
+		t.Errorf("BuildThreadReplyCtx called %d times, want 2 (m1 and m3 match 'alert')", len(threadCalls))
+	}
+
+	//    c. Anchor was updated
+	got := sm.Store().Get("sub-full")
+	if got == nil {
+		t.Fatal("subscription should exist after scan")
+	}
+	if got.Anchor == "" {
+		t.Error("anchor should be updated after scan with messages")
+	}
+
+	//    d. ProcessedIDs contains matched message IDs
+	hasM1 := false
+	hasM3 := false
+	for _, id := range got.ProcessedIDs {
+		if id == "m1" {
+			hasM1 = true
+		}
+		if id == "m3" {
+			hasM3 = true
+		}
+	}
+	if !hasM1 || !hasM3 {
+		t.Errorf("ProcessedIDs should contain m1 and m3, got %v", got.ProcessedIDs)
+	}
+
+	//    e. LastRun was set
+	if got.LastRun.IsZero() {
+		t.Error("LastRun should be set after scan")
+	}
+
+	//    f. ConsecutiveErrors reset to 0 on success
+	if got.ConsecutiveErrors != 0 {
+		t.Errorf("ConsecutiveErrors = %d, want 0 after successful scan", got.ConsecutiveErrors)
+	}
+
+	// 5. Disable and verify cron entry removed
+	if err := sm.DisableSubscription("sub-full"); err != nil {
+		t.Fatalf("DisableSubscription: %v", err)
+	}
+	sm.mu.RLock()
+	_, hasEntry = sm.entries["sub-full"]
+	sm.mu.RUnlock()
+	if hasEntry {
+		t.Error("disabled subscription should not have a cron entry")
+	}
+	got = sm.Store().Get("sub-full")
+	if got.Enabled {
+		t.Error("subscription should be disabled in store")
+	}
+
+	// 6. Re-enable and verify cron entry re-added
+	if err := sm.EnableSubscription("sub-full"); err != nil {
+		t.Fatalf("EnableSubscription: %v", err)
+	}
+	sm.mu.RLock()
+	_, hasEntry = sm.entries["sub-full"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Error("re-enabled subscription should have a cron entry")
+	}
+	got = sm.Store().Get("sub-full")
+	if !got.Enabled {
+		t.Error("subscription should be enabled in store after re-enable")
+	}
+
+	// 7. Cleanup — Stop is deferred, temp dir auto-cleaned by testing
+}
+
+// TestIntegration_SubscriptionAutoDisable verifies that 10 consecutive
+// permanent errors triggers auto-disable and cron entry removal.
+func TestIntegration_SubscriptionAutoDisable(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	// Engine not registered for the project — executeScan will hit engine-not-found
+	// which is classified as a permanent error, incrementing ConsecutiveErrors.
+	sub := &Subscription{
+		ID:                "sub-autodis",
+		Project:           "proj1",
+		ChatID:            "chat1",
+		Platform:          "feishu",
+		SessionKey:        "feishu:chat1:bot",
+		Filter:            "alert",
+		Prompt:            "test",
+		Interval:          "*/5 * * * *",
+		Enabled:           true,
+		ConsecutiveErrors: 9, // one more error should trigger auto-disable
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatalf("AddSubscription: %v", err)
+	}
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sm.Stop()
+
+	// Verify cron entry exists before auto-disable
+	sm.mu.RLock()
+	_, hasEntry := sm.entries["sub-autodis"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Fatal("subscription should have a cron entry before auto-disable")
+	}
+
+	// Trigger scan — engine not found → permanent error → ConsecutiveErrors=10 → auto-disable
+	sm.executeScan("sub-autodis")
+
+	// Verify auto-disable happened
+	got := store.Get("sub-autodis")
+	if got.Enabled {
+		t.Error("subscription should be auto-disabled after 10th consecutive error")
+	}
+	if got.ConsecutiveErrors != 10 {
+		t.Errorf("ConsecutiveErrors = %d, want 10", got.ConsecutiveErrors)
+	}
+
+	// Verify cron entry removed
+	sm.mu.RLock()
+	_, hasEntry = sm.entries["sub-autodis"]
+	sm.mu.RUnlock()
+	if hasEntry {
+		t.Error("auto-disabled subscription should have cron entry removed")
+	}
+
+	// Continue scanning should be a no-op (disabled)
+	sm.executeScan("sub-autodis")
+	got = store.Get("sub-autodis")
+	if !got.LastRun.IsZero() && got.ConsecutiveErrors > 10 {
+		t.Error("disabled subscription should not accumulate more errors from executeScan")
+	}
+}
+
+// TestIntegration_SubscriptionConcurrencyGuard verifies that concurrent
+// scans on the same subscription are skipped.
+func TestIntegration_SubscriptionConcurrencyGuard(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	// Use a scanner platform that introduces delay so the scan takes time
+	p := &integrationScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", ChatID: "chat1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+		},
+		rcCtx:     "reply-ctx",
+		threadCtx: "thread-ctx",
+	}
+
+	eng := NewEngine("proj1", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	eng.SetSubscriptionManager(sm)
+	sm.RegisterEngine("proj1", eng)
+
+	sub := &Subscription{
+		ID:          "sub-conc",
+		Project:     "proj1",
+		ChatID:      "chat1",
+		Platform:    "feishu",
+		SessionKey:  "feishu:chat1:bot",
+		Filter:      "alert",
+		Prompt:      "test",
+		Interval:    "*/5 * * * *",
+		Enabled:     true,
+		TimeoutMins: 1,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatalf("AddSubscription: %v", err)
+	}
+
+	// Simulate an in-progress scan by setting the running flag
+	sm.running.Store("sub-conc", true)
+
+	// Try to execute a concurrent scan — should be skipped
+	sm.executeScan("sub-conc")
+
+	// Verify that ListMessages was NOT called (scan was skipped)
+	listCalls := p.getListCalls()
+	if len(listCalls) != 0 {
+		t.Errorf("ListMessages should not be called when scan is skipped, got %d calls", len(listCalls))
+	}
+
+	// Verify the running flag is still set (we set it manually, not by executeScan)
+	if _, ok := sm.running.Load("sub-conc"); !ok {
+		t.Error("running flag should still be set since scan was skipped")
+	}
+
+	// Clean up
+	sm.running.Delete("sub-conc")
+}
