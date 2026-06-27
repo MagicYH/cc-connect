@@ -697,6 +697,14 @@ name = "my-backend"
 # filter_external_sessions：为 true 时，/list /switch /delete 仅显示由 cc-connect 创建的会话，
 # 隐藏在相同 work_dir 下通过直接 CLI 创建的会话。默认 false = 显示 agent 的全部会话。
 #
+# Enable the subscription (auto-investigation) feature for this project.
+# When enabled, you can use /subscribe to create subscriptions that periodically
+# scan group messages and auto-inject matched messages into the agent.
+# Default: false (opt-in).
+# 启用订阅（自动巡检）功能。启用后可使用 /subscribe 创建订阅，周期性扫描群消息并自动注入到 Agent。
+# 默认 false（需显式开启）。
+# subscriptions_enabled = true
+#
 # shell = "/bin/fish"                        # Per-project shell override / 项目级 shell 覆盖
 # shell_profile = "source ~/.config/fish/config.fish"  # Per-project shell profile / 项目级 shell profile
 #

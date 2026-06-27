@@ -533,6 +533,9 @@ type ProjectConfig struct {
 	Display    *DisplayConfig  `toml:"display,omitempty"`
 	Observe    *ObserveConfig  `toml:"observe,omitempty"`
 	References ReferenceConfig `toml:"references,omitempty"`
+	// SubscriptionsEnabled controls whether the subscription (auto-investigation)
+	// feature is active for this project. Default: false (opt-in).
+	SubscriptionsEnabled *bool `toml:"subscriptions_enabled,omitempty"`
 	// FilterExternalSessions: when true, /list only shows sessions created by
 	// cc-connect, hiding sessions created by direct CLI usage in the same work_dir.
 	// Default is false (show all sessions).
@@ -541,6 +544,15 @@ type ProjectConfig struct {
 	Shell string `toml:"shell,omitempty"`
 	// ShellProfile overrides the global shell_profile for this project.
 	ShellProfile string `toml:"shell_profile,omitempty"`
+}
+
+// IsSubscriptionsEnabled returns whether the subscription (auto-investigation)
+// feature is active for this project. Default: false (opt-in).
+func (c *ProjectConfig) IsSubscriptionsEnabled() bool {
+	if c.SubscriptionsEnabled != nil {
+		return *c.SubscriptionsEnabled
+	}
+	return false
 }
 
 type AgentConfig struct {
