@@ -8,16 +8,16 @@ import (
 
 func newTestSubscription(id, project, chatID string) *Subscription {
 	return &Subscription{
-		ID:        id,
-		Project:   project,
-		ChatID:    chatID,
-		Platform:  "feishu",
+		ID:         id,
+		Project:    project,
+		ChatID:     chatID,
+		Platform:   "feishu",
 		SessionKey: "feishu:" + chatID,
-		Prompt:    "check alerts",
-		Interval:  "5m",
-		Enabled:   true,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Prompt:     "check alerts",
+		Interval:   "5m",
+		Enabled:    true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 }
 
@@ -387,6 +387,7 @@ func TestSubscriptionStore_Update(t *testing.T) {
 	if err := store.Add(sub); err != nil {
 		t.Fatal(err)
 	}
+	origUpdatedAt := sub.UpdatedAt
 
 	if err := store.Update("sub-upd", map[string]any{
 		"prompt":   "updated prompt",
@@ -408,8 +409,8 @@ func TestSubscriptionStore_Update(t *testing.T) {
 	}
 
 	// UpdatedAt should have changed
-	if !got.UpdatedAt.After(sub.UpdatedAt) && got.UpdatedAt != sub.UpdatedAt {
-		t.Error("UpdatedAt should be updated")
+	if !got.UpdatedAt.After(origUpdatedAt) {
+		t.Error("UpdatedAt should be after original UpdatedAt")
 	}
 }
 

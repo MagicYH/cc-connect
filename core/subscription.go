@@ -167,11 +167,42 @@ func (s *SubscriptionStore) ListAll() []*Subscription {
 
 // Update modifies the specified fields on a subscription and sets UpdatedAt.
 // Returns ErrSubscriptionNotFound if the ID does not exist.
+// Read-only fields (id, created_at, last_run, last_error, consecutive_errors,
+// processed_ids, anchor) cannot be modified and will cause an error.
 func (s *SubscriptionStore) Update(id string, fields map[string]any) error {
+	readOnlyFields := map[string]bool{
+		"id": true, "created_at": true, "last_run": true, "last_error": true,
+		"consecutive_errors": true, "processed_ids": true, "anchor": true,
+	}
+	for field := range fields {
+		if readOnlyFields[field] {
+			return fmt.Errorf("field %q is read-only", field)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, sub := range s.subs {
 		if sub.ID == id {
+			newProject := sub.Project
+			newChatID := sub.ChatID
+			if v, ok := fields["project"]; ok {
+				if s, ok := v.(string); ok {
+					newProject = s
+				}
+			}
+			if v, ok := fields["chat_id"]; ok {
+				if s, ok := v.(string); ok {
+					newChatID = s
+				}
+			}
+			if newProject != sub.Project || newChatID != sub.ChatID {
+				for _, existing := range s.subs {
+					if existing.ID != id && existing.Project == newProject && existing.ChatID == newChatID {
+						return ErrSubscriptionDuplicate
+					}
+				}
+			}
 			for field, value := range fields {
 				if err := updateSubscriptionField(sub, field, value); err != nil {
 					return fmt.Errorf("update field %q: %w", field, err)
@@ -230,11 +261,6 @@ func updateSubscriptionField(sub *Subscription, field string, value any) error {
 			sub.Prompt = v
 			return nil
 		}
-	case "anchor":
-		if v, ok := value.(string); ok {
-			sub.Anchor = v
-			return nil
-		}
 	case "interval":
 		if v, ok := value.(string); ok {
 			sub.Interval = v
@@ -274,7 +300,7 @@ func (s *SubscriptionStore) UpdateAnchor(id string, anchor string, processedIDs 
 	for _, sub := range s.subs {
 		if sub.ID == id {
 			sub.Anchor = anchor
-			sub.ProcessedIDs = processedIDs
+			sub.ProcessedIDs = append([]string(nil), processedIDs...)
 			sub.UpdatedAt = time.Now()
 			if err := s.save(); err != nil {
 				slog.Warn("subscription: failed to save after update anchor", "error", err)
