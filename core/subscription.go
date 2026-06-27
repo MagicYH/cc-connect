@@ -9,8 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 // Subscription represents a recurring scan of a messaging thread for new items.
@@ -341,4 +344,145 @@ func (s *SubscriptionStore) MarkRun(id string, lastErr string, isPermanent bool)
 		}
 	}
 	return ErrSubscriptionNotFound
+}
+
+// filterMessages applies Filter and ExcludeFilter to scanned messages, excluding bot messages.
+func filterMessages(sub *Subscription, msgs []ScannedMessage) []ScannedMessage {
+	var matched []ScannedMessage
+	for _, msg := range msgs {
+		if msg.IsBot {
+			continue
+		}
+		if sub.Filter != "" && !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(sub.Filter)) {
+			continue
+		}
+		if sub.ExcludeFilter != "" && strings.Contains(strings.ToLower(msg.Content), strings.ToLower(sub.ExcludeFilter)) {
+			continue
+		}
+		matched = append(matched, msg)
+	}
+	return matched
+}
+
+// BuildPrompt replaces {{content}} in the subscription's prompt template.
+func (s *Subscription) BuildPrompt(content string) string {
+	return strings.ReplaceAll(s.Prompt, "{{content}}", content)
+}
+
+// LogEntry records a subscription processing event.
+type LogEntry struct {
+	SubscriptionID string    `json:"subscription_id"`
+	MessageID      string    `json:"message_id"`
+	ChatID         string    `json:"chat_id"`
+	Content        string    `json:"content,omitempty"`
+	SessionID      string    `json:"session_id,omitempty"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// SubscriptionManager manages subscription scheduling and execution.
+type SubscriptionManager struct {
+	store   *SubscriptionStore
+	cron    *cron.Cron
+	engines map[string]*Engine
+	mu      sync.RWMutex
+	entries map[string]cron.EntryID
+	logsDir string
+}
+
+// NewSubscriptionManager creates a new SubscriptionManager with the given store and data directory.
+func NewSubscriptionManager(store *SubscriptionStore, dataDir string) *SubscriptionManager {
+	return &SubscriptionManager{
+		store:   store,
+		cron:    cron.New(cron.WithSeconds()),
+		engines: make(map[string]*Engine),
+		entries: make(map[string]cron.EntryID),
+		logsDir: filepath.Join(dataDir, "subscriptions", "logs"),
+	}
+}
+
+// RegisterEngine registers an engine for the given project name.
+func (sm *SubscriptionManager) RegisterEngine(name string, e *Engine) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.engines[name] = e
+}
+
+// Start starts the cron scheduler and schedules all enabled subscriptions.
+func (sm *SubscriptionManager) Start() error {
+	for _, sub := range sm.store.ListAll() {
+		if sub.Enabled {
+			sm.scheduleSubscription(sub)
+		}
+	}
+	sm.cron.Start()
+	return nil
+}
+
+// Stop stops the cron scheduler.
+func (sm *SubscriptionManager) Stop() {
+	sm.cron.Stop()
+}
+
+func (sm *SubscriptionManager) scheduleSubscription(sub *Subscription) error {
+	entryID, err := sm.cron.AddFunc(sub.Interval, func() {
+		sm.executeScan(sub.ID)
+	})
+	if err != nil {
+		return err
+	}
+	sm.entries[sub.ID] = entryID
+	return nil
+}
+
+// AddSubscription adds a new subscription and schedules it if enabled.
+func (sm *SubscriptionManager) AddSubscription(sub *Subscription) error {
+	if err := sm.store.Add(sub); err != nil {
+		return err
+	}
+	if sub.Enabled {
+		return sm.scheduleSubscription(sub)
+	}
+	return nil
+}
+
+// RemoveSubscription removes a subscription and unschedules it.
+func (sm *SubscriptionManager) RemoveSubscription(id string) error {
+	if entryID, ok := sm.entries[id]; ok {
+		sm.cron.Remove(entryID)
+		delete(sm.entries, id)
+	}
+	return sm.store.Remove(id)
+}
+
+func (sm *SubscriptionManager) executeScan(subID string) {
+	sub := sm.store.Get(subID)
+	if sub == nil {
+		return
+	}
+	if !sub.Enabled {
+		return
+	}
+	engine, ok := sm.engines[sub.Project]
+	if !ok {
+		slog.Error("subscription: engine not found", "subscription_id", subID, "project", sub.Project)
+		return
+	}
+	engine.ExecuteSubscriptionScan(sub)
+}
+
+// AppendLog appends a log entry to the subscription's log file.
+func (sm *SubscriptionManager) AppendLog(entry LogEntry) error {
+	if err := os.MkdirAll(sm.logsDir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(sm.logsDir, entry.SubscriptionID+".log")
+	data, _ := json.Marshal(entry)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, string(data))
+	return err
 }

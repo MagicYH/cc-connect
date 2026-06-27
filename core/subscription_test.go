@@ -470,3 +470,37 @@ func TestGenerateSubscriptionID(t *testing.T) {
 		t.Error("two GenerateSubscriptionID calls returned the same ID")
 	}
 }
+
+func TestSubscriptionFilter(t *testing.T) {
+	msgs := []ScannedMessage{
+		{MessageID: "m1", Content: "【告警】CPU超过90%", IsBot: false},
+		{MessageID: "m2", Content: "【恢复】CPU已正常", IsBot: false},
+		{MessageID: "m3", Content: "今日天气不错", IsBot: false},
+		{MessageID: "m4", Content: "Bot消息", IsBot: true},
+	}
+	sub := &Subscription{Filter: "告警", ExcludeFilter: "恢复"}
+	matched := filterMessages(sub, msgs)
+	if len(matched) != 1 || matched[0].MessageID != "m1" {
+		t.Errorf("filterMessages = %v, want 1 match with m1", matched)
+	}
+}
+
+func TestSubscriptionFilterEmpty(t *testing.T) {
+	msgs := []ScannedMessage{
+		{MessageID: "m1", Content: "消息1", IsBot: false},
+		{MessageID: "m2", Content: "消息2", IsBot: true},
+	}
+	sub := &Subscription{Filter: "", ExcludeFilter: ""}
+	matched := filterMessages(sub, msgs)
+	if len(matched) != 1 {
+		t.Errorf("filterMessages empty = %d, want 1 (bot excluded)", len(matched))
+	}
+}
+
+func TestBuildPrompt(t *testing.T) {
+	sub := &Subscription{Prompt: "排查：{{content}}"}
+	result := sub.BuildPrompt("CPU超过90%")
+	if result != "排查：CPU超过90%" {
+		t.Errorf("BuildPrompt = %q, want %q", result, "排查：CPU超过90%")
+	}
+}
