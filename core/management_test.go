@@ -2959,17 +2959,17 @@ func TestMgmt_Subscription_CreateDefaults(t *testing.T) {
 	}
 	var sub Subscription
 	json.Unmarshal(r.Data, &sub)
-	if sub.Prompt != "{{content}}" {
-		t.Fatalf("default prompt = %q, want {{content}}", sub.Prompt)
+	if sub.Prompt != DefaultSubscriptionPrompt {
+		t.Fatalf("default prompt = %q, want %q", sub.Prompt, DefaultSubscriptionPrompt)
 	}
-	if sub.Interval != "*/2 * * * *" {
-		t.Fatalf("default interval = %q, want */2 * * * *", sub.Interval)
+	if sub.Interval != DefaultSubscriptionInterval {
+		t.Fatalf("default interval = %q, want %q", sub.Interval, DefaultSubscriptionInterval)
 	}
-	if sub.ConcurrencyLimit != 5 {
-		t.Fatalf("default concurrency_limit = %d, want 5", sub.ConcurrencyLimit)
+	if sub.ConcurrencyLimit != DefaultSubscriptionConcurrencyLimit {
+		t.Fatalf("default concurrency_limit = %d, want %d", sub.ConcurrencyLimit, DefaultSubscriptionConcurrencyLimit)
 	}
-	if sub.TimeoutMins != 30 {
-		t.Fatalf("default timeout_mins = %d, want 30", sub.TimeoutMins)
+	if sub.TimeoutMins != DefaultSubscriptionTimeoutMins {
+		t.Fatalf("default timeout_mins = %d, want %d", sub.TimeoutMins, DefaultSubscriptionTimeoutMins)
 	}
 }
 
@@ -3392,5 +3392,107 @@ func TestMgmt_Subscription_PatchInvalidJSON(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&r)
 	if r.OK {
 		t.Fatal("expected error for invalid JSON in PATCH")
+	}
+}
+
+func TestMgmt_Subscription_CreateMissingSessionKey(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":  "test-project",
+		"chat_id":  "oc_chat",
+		"platform": "feishu",
+	})
+	if r.OK {
+		t.Fatal("expected error for missing session_key")
+	}
+	if !strings.Contains(r.Error, "session_key is required") {
+		t.Fatalf("error = %q, want session_key required", r.Error)
+	}
+}
+
+func TestMgmt_Subscription_PatchInvalidInterval(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_patch_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_patch_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok", map[string]any{
+		"interval": "not-a-cron",
+	})
+	if r.OK {
+		t.Fatal("expected error for invalid cron interval in PATCH")
+	}
+	if !strings.Contains(r.Error, "invalid interval") {
+		t.Fatalf("error = %q, want invalid interval", r.Error)
+	}
+
+	// Valid interval should succeed
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok", map[string]any{
+		"interval": "*/10 * * * *",
+	})
+	if !r.OK {
+		t.Fatalf("PATCH with valid interval failed: %s", r.Error)
+	}
+	var updated Subscription
+	json.Unmarshal(r.Data, &updated)
+	if updated.Interval != "*/10 * * * *" {
+		t.Fatalf("interval after update = %q, want */10 * * * *", updated.Interval)
+	}
+}
+
+func TestMgmt_Subscription_PatchReschedulesCron(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_resched_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_resched_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	// PATCH interval — should reschedule
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok", map[string]any{
+		"interval": "0 * * * *",
+	})
+	if !r.OK {
+		t.Fatalf("PATCH interval failed: %s", r.Error)
+	}
+	var updated Subscription
+	json.Unmarshal(r.Data, &updated)
+	if updated.Interval != "0 * * * *" {
+		t.Fatalf("interval after PATCH = %q, want 0 * * * *", updated.Interval)
 	}
 }

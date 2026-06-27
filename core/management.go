@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 // ProjectSettingsUpdate is passed to SetSaveProjectSettings to persist management API PATCH fields.
@@ -1678,12 +1680,17 @@ func (m *ManagementServer) handleSubscription(w http.ResponseWriter, r *http.Req
 		}
 		chatID, _ := req["chat_id"].(string)
 		project, _ := req["project"].(string)
+		sessionKey := strVal(req, "session_key")
 		if chatID == "" {
 			mgmtError(w, http.StatusBadRequest, "chat_id is required")
 			return
 		}
 		if project == "" {
 			mgmtError(w, http.StatusBadRequest, "project is required")
+			return
+		}
+		if sessionKey == "" {
+			mgmtError(w, http.StatusBadRequest, "session_key is required")
 			return
 		}
 
@@ -1693,7 +1700,7 @@ func (m *ManagementServer) handleSubscription(w http.ResponseWriter, r *http.Req
 			ChatID:           chatID,
 			ChatName:         strVal(req, "chat_name"),
 			Platform:         strVal(req, "platform"),
-			SessionKey:       strVal(req, "session_key"),
+			SessionKey:       sessionKey,
 			Filter:           strVal(req, "filter"),
 			ExcludeFilter:    strVal(req, "exclude_filter"),
 			Prompt:           strVal(req, "prompt"),
@@ -1704,18 +1711,18 @@ func (m *ManagementServer) handleSubscription(w http.ResponseWriter, r *http.Req
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
-		// Apply defaults
+		// Apply defaults (shared constants)
 		if sub.Prompt == "" {
-			sub.Prompt = "{{content}}"
+			sub.Prompt = DefaultSubscriptionPrompt
 		}
 		if sub.Interval == "" {
-			sub.Interval = "*/2 * * * *"
+			sub.Interval = DefaultSubscriptionInterval
 		}
 		if sub.ConcurrencyLimit == 0 {
-			sub.ConcurrencyLimit = 5
+			sub.ConcurrencyLimit = DefaultSubscriptionConcurrencyLimit
 		}
 		if sub.TimeoutMins == 0 {
-			sub.TimeoutMins = 30
+			sub.TimeoutMins = DefaultSubscriptionTimeoutMins
 		}
 
 		if err := m.subscriptionManager.AddSubscription(sub); err != nil {
@@ -1822,6 +1829,13 @@ func (m *ManagementServer) handleSubscriptionByID(w http.ResponseWriter, r *http
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
+		// Validate interval before applying
+		if interval, ok := updates["interval"].(string); ok {
+			if _, err := cron.ParseStandard(interval); err != nil {
+				mgmtError(w, http.StatusBadRequest, "invalid interval: "+err.Error())
+				return
+			}
+		}
 		if err := m.subscriptionManager.Store().Update(id, updates); err != nil {
 			if errors.Is(err, ErrSubscriptionNotFound) {
 				mgmtError(w, http.StatusNotFound, err.Error())
@@ -1829,6 +1843,17 @@ func (m *ManagementServer) handleSubscriptionByID(w http.ResponseWriter, r *http
 			}
 			mgmtError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		// Reschedule if interval or enabled changed
+		if _, ok := updates["interval"]; ok {
+			if err := m.subscriptionManager.RescheduleSubscription(id); err != nil {
+				slog.Warn("subscription: failed to reschedule after PATCH", "id", id, "error", err)
+			}
+		}
+		if _, ok := updates["enabled"]; ok {
+			if err := m.subscriptionManager.RescheduleSubscription(id); err != nil {
+				slog.Warn("subscription: failed to reschedule after PATCH", "id", id, "error", err)
+			}
 		}
 		sub := m.subscriptionManager.Store().Get(id)
 		mgmtJSON(w, http.StatusOK, sub)

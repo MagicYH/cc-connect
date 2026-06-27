@@ -40,6 +40,14 @@ type Subscription struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+// Default values shared between slash command and management API.
+const (
+	DefaultSubscriptionInterval         = "*/5 * * * *"
+	DefaultSubscriptionPrompt           = "{{content}}"
+	DefaultSubscriptionConcurrencyLimit = 5
+	DefaultSubscriptionTimeoutMins      = 30
+)
+
 var ErrSubscriptionNotFound = errors.New("subscription not found")
 
 var ErrSubscriptionDuplicate = errors.New("subscription already exists for this project and chat")
@@ -504,6 +512,26 @@ func (sm *SubscriptionManager) DisableSubscription(id string) error {
 	if err := sm.store.Update(id, map[string]any{"enabled": false}); err != nil {
 		return err
 	}
+	sm.mu.Lock()
+	if entryID, ok := sm.entries[id]; ok {
+		sm.cron.Remove(entryID)
+		delete(sm.entries, id)
+	}
+	sm.mu.Unlock()
+	return nil
+}
+
+// RescheduleSubscription re-reads the subscription and reschedules its cron entry.
+// Call this after PATCHing fields that affect scheduling (interval, enabled).
+func (sm *SubscriptionManager) RescheduleSubscription(id string) error {
+	sub := sm.store.Get(id)
+	if sub == nil {
+		return ErrSubscriptionNotFound
+	}
+	if sub.Enabled {
+		return sm.scheduleSubscription(sub)
+	}
+	// If disabled, remove any existing schedule
 	sm.mu.Lock()
 	if entryID, ok := sm.entries[id]; ok {
 		sm.cron.Remove(entryID)

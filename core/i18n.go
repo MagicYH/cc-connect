@@ -583,6 +583,7 @@ const (
 	MsgBuiltinCmdDir       MsgKey = "dir"
 	MsgBuiltinCmdDiff      MsgKey = "diff"
 	MsgBuiltinCmdPs        MsgKey = "ps"
+	MsgBuiltinCmdSubscribe MsgKey = "subscribe"
 
 	MsgDiffEmpty       MsgKey = "diff_empty"
 	MsgDiffNoDiff2HTML MsgKey = "diff_no_diff2html"
@@ -661,7 +662,6 @@ const (
 	MsgSubAutoDisabled  MsgKey = "sub_auto_disabled"
 	MsgSubDelConfirm    MsgKey = "sub_del_confirm"
 	MsgSubShowFormat    MsgKey = "sub_show_format"
-	MsgSubEditUsage     MsgKey = "sub_edit_usage"
 	MsgSubHelp          MsgKey = "sub_help"
 	MsgSubAdminRequired MsgKey = "sub_admin_required"
 )
@@ -3802,6 +3802,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "実行中のタスクに補足情報を送信",
 		LangSpanish:            "Enviar un P.S. a la tarea en curso",
 	},
+	MsgBuiltinCmdSubscribe: {
+		LangEnglish:            "Manage subscriptions, arg: [add|list|show|enable|disable|del]",
+		LangChinese:            "管理订阅，参数: [add|list|show|enable|disable|del]",
+		LangTraditionalChinese: "管理訂閱，參數: [add|list|show|enable|disable|del]",
+		LangJapanese:           "サブスクリプション管理、引数: [add|list|show|enable|disable|del]",
+		LangSpanish:            "Gestionar suscripciones, arg: [add|list|show|enable|disable|del]",
+	},
 	MsgDiffEmpty: {
 		LangEnglish:            "No diff — clean working tree (or no changes vs `%s`).",
 		LangChinese:            "无差异 — 工作区干净（或与 `%s` 无变化）。",
@@ -4233,11 +4240,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "Suscripción creada (ID: %s)\nFiltro: %s | Excluir: %s\nPrompt: %s\nIntervalo: %s\nConsejo: Usa {{content}} en el prompt para referenciar el mensaje coincidente.",
 	},
 	MsgSubAlreadyExists: {
-		LangEnglish:            "This group is already subscribed. Use /subscribe edit to modify.",
-		LangChinese:            "该群已订阅，请使用 /subscribe edit 修改。",
-		LangTraditionalChinese: "該群已訂閱，請使用 /subscribe edit 修改。",
-		LangJapanese:           "このグループは既にサブスクリプションされています。/subscribe edit で変更してください。",
-		LangSpanish:            "Este grupo ya está suscrito. Use /subscribe edit para modificar.",
+		LangEnglish:            "This group is already subscribed. Use /subscribe del to remove, then re-add, or use the PATCH API to modify.",
+		LangChinese:            "该群已订阅。请使用 /subscribe del 删除后重新添加，或使用 PATCH API 修改。",
+		LangTraditionalChinese: "該群已訂閱。請使用 /subscribe del 刪除後重新添加，或使用 PATCH API 修改。",
+		LangJapanese:           "このグループは既にサブスクリプションされています。/subscribe del で削除して再作成するか、PATCH APIで変更してください。",
+		LangSpanish:            "Este grupo ya está suscrito. Use /subscribe del para eliminar y volver a agregar, o use la API PATCH para modificar.",
 	},
 	MsgSubNotFound: {
 		LangEnglish:            "Subscription not found: %s",
@@ -4302,20 +4309,12 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "サブスクリプション: %s\nグループ: %s\nフィルター: %s\n除外: %s\nプロンプト: %s\n間隔: %s\n有効: %v\n連続エラー: %d\n最終実行: %s\n最終エラー: %s\nアンカー: %s",
 		LangSpanish:            "Suscripción: %s\nGrupo: %s\nFiltro: %s\nExcluir: %s\nPrompt: %s\nIntervalo: %s\nHabilitado: %v\nErrores consecutivos: %d\nÚltima ejecución: %s\nÚltimo error: %s\nAncla: %s",
 	},
-	MsgSubEditUsage: {
-		LangEnglish:            "Usage: /subscribe edit <id> <field> <value>",
-		LangChinese:            "用法：/subscribe edit <id> <字段> <值>",
-		LangTraditionalChinese: "用法：/subscribe edit <id> <欄位> <值>",
-		LangJapanese:           "使い方: /subscribe edit <id> <フィールド> <値>",
-		LangSpanish:            "Uso: /subscribe edit <id> <campo> <valor>",
-	},
 	MsgSubHelp: {
 		LangEnglish: "Subscription Commands:\n" +
 			"/subscribe <filter> <exclude> [prompt...] - Create subscription\n" +
 			"/subscribe list - List subscriptions for this group\n" +
 			"/subscribe list all - List all subscriptions\n" +
 			"/subscribe show <id> - Show subscription details\n" +
-			"/subscribe edit <id> <field> <value> - Edit subscription\n" +
 			"/subscribe enable <id> - Enable subscription\n" +
 			"/subscribe disable <id> - Disable subscription\n" +
 			"/subscribe del <id> - Delete subscription\n\n" +
@@ -4325,7 +4324,6 @@ var messages = map[MsgKey]map[Language]string{
 			"/subscribe list - 查看本群订阅\n" +
 			"/subscribe list all - 查看所有订阅\n" +
 			"/subscribe show <id> - 查看订阅详情\n" +
-			"/subscribe edit <id> <字段> <值> - 编辑订阅\n" +
 			"/subscribe enable <id> - 启用订阅\n" +
 			"/subscribe disable <id> - 禁用订阅\n" +
 			"/subscribe del <id> - 删除订阅\n\n" +
@@ -4335,7 +4333,6 @@ var messages = map[MsgKey]map[Language]string{
 			"/subscribe list - 查看本群訂閱\n" +
 			"/subscribe list all - 查看所有訂閱\n" +
 			"/subscribe show <id> - 查看訂閱詳情\n" +
-			"/subscribe edit <id> <欄位> <值> - 編輯訂閱\n" +
 			"/subscribe enable <id> - 啟用訂閱\n" +
 			"/subscribe disable <id> - 停用訂閱\n" +
 			"/subscribe del <id> - 刪除訂閱\n\n" +
@@ -4345,7 +4342,6 @@ var messages = map[MsgKey]map[Language]string{
 			"/subscribe list - このグループのサブスクリプション\n" +
 			"/subscribe list all - すべてのサブスクリプション\n" +
 			"/subscribe show <id> - 詳細表示\n" +
-			"/subscribe edit <id> <フィールド> <値> - 編集\n" +
 			"/subscribe enable <id> - 有効化\n" +
 			"/subscribe disable <id> - 無効化\n" +
 			"/subscribe del <id> - 削除\n\n" +
@@ -4355,7 +4351,6 @@ var messages = map[MsgKey]map[Language]string{
 			"/subscribe list - Ver suscripciones del grupo\n" +
 			"/subscribe list all - Ver todas\n" +
 			"/subscribe show <id> - Ver detalles\n" +
-			"/subscribe edit <id> <campo> <valor> - Editar\n" +
 			"/subscribe enable <id> - Habilitar\n" +
 			"/subscribe disable <id> - Deshabilitar\n" +
 			"/subscribe del <id> - Eliminar\n\n" +
