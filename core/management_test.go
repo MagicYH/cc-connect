@@ -65,6 +65,8 @@ func testManagementServer(t *testing.T, token string) (*ManagementServer, *httpt
 	mux.HandleFunc(prefix+"/skills", mgmt.wrap(mgmt.handleSkills))
 	mux.HandleFunc(prefix+"/skills/presets", mgmt.wrap(mgmt.handleSkillPresets))
 	mux.HandleFunc(prefix+"/bridge/adapters", mgmt.wrap(mgmt.handleBridgeAdapters))
+	mux.HandleFunc(prefix+"/subscription", mgmt.wrap(mgmt.handleSubscription))
+	mux.HandleFunc(prefix+"/subscription/", mgmt.wrap(mgmt.handleSubscriptionByID))
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
@@ -409,7 +411,7 @@ func TestMgmt_Config(t *testing.T) {
 	// Write a temp TOML file and point the server at it
 	tmp := t.TempDir()
 	cfgPath := tmp + "/config.toml"
-	if err := os.WriteFile(cfgPath, []byte("[display]\ntitle = \"test\"\n"), 0644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("[display]\ntitle = \"test\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	srv.SetConfigFilePath(cfgPath)
@@ -1803,7 +1805,7 @@ func TestMgmt_Config_Save(t *testing.T) {
 
 	tmp := t.TempDir()
 	cfgPath := tmp + "/config.toml"
-	os.WriteFile(cfgPath, []byte("[display]\ntitle = \"old\"\n"), 0644)
+	os.WriteFile(cfgPath, []byte("[display]\ntitle = \"old\"\n"), 0o644)
 
 	req, _ := http.NewRequest("PUT", ts.URL+"/api/v1/config", strings.NewReader("# new config\n"))
 	req.Header.Set("Authorization", "Bearer tok")
@@ -2852,5 +2854,543 @@ func TestMgmt_SetupWeixinPoll_RejectsMalformedAPIURL(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("api_url=%q: status=%d, want %d (body=%s)", bad, w.Code, http.StatusBadRequest, w.Body.String())
 		}
+	}
+}
+
+// ── Subscription API ──
+
+func TestMgmt_Subscription_NilManager(t *testing.T) {
+	_, ts, _ := testManagementServer(t, "tok")
+
+	r := mgmtGet(t, ts.URL+"/api/v1/subscription", "tok")
+	if r.OK {
+		t.Fatal("expected error when subscriptionManager is nil")
+	}
+	if !strings.Contains(r.Error, "not available") {
+		t.Fatalf("error = %q, want not available", r.Error)
+	}
+}
+
+func TestMgmt_Subscription_ListEmpty(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtGet(t, ts.URL+"/api/v1/subscription", "tok")
+	if !r.OK {
+		t.Fatalf("subscription list failed: %s", r.Error)
+	}
+	var data struct {
+		Subscriptions []*Subscription `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(r.Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(data.Subscriptions) != 0 {
+		t.Fatalf("expected 0 subscriptions, got %d", len(data.Subscriptions))
+	}
+}
+
+func TestMgmt_Subscription_Create(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":           "test-project",
+		"chat_id":           "oc_test_chat",
+		"chat_name":         "Test Group",
+		"platform":          "feishu",
+		"session_key":       "feishu:oc_test_chat:bot123",
+		"filter":            "告警",
+		"exclude_filter":    "恢复",
+		"prompt":            "排查：{{content}}",
+		"interval":          "*/2 * * * *",
+		"concurrency_limit": 5,
+		"timeout_mins":      30,
+	})
+	if !r.OK {
+		t.Fatalf("subscription create failed: %s", r.Error)
+	}
+
+	var sub Subscription
+	if err := json.Unmarshal(r.Data, &sub); err != nil {
+		t.Fatalf("unmarshal subscription: %v", err)
+	}
+	if sub.ID == "" {
+		t.Fatal("expected subscription ID")
+	}
+	if sub.Project != "test-project" {
+		t.Fatalf("project = %q, want test-project", sub.Project)
+	}
+	if sub.Filter != "告警" {
+		t.Fatalf("filter = %q, want 告警", sub.Filter)
+	}
+	if !sub.Enabled {
+		t.Fatal("expected enabled=true by default")
+	}
+}
+
+func TestMgmt_Subscription_CreateDefaults(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_chat2",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_chat2:bot",
+	})
+	if !r.OK {
+		t.Fatalf("subscription create with defaults failed: %s", r.Error)
+	}
+	var sub Subscription
+	json.Unmarshal(r.Data, &sub)
+	if sub.Prompt != "{{content}}" {
+		t.Fatalf("default prompt = %q, want {{content}}", sub.Prompt)
+	}
+	if sub.Interval != "*/2 * * * *" {
+		t.Fatalf("default interval = %q, want */2 * * * *", sub.Interval)
+	}
+	if sub.ConcurrencyLimit != 5 {
+		t.Fatalf("default concurrency_limit = %d, want 5", sub.ConcurrencyLimit)
+	}
+	if sub.TimeoutMins != 30 {
+		t.Fatalf("default timeout_mins = %d, want 30", sub.TimeoutMins)
+	}
+}
+
+func TestMgmt_Subscription_CreateMissingRequired(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project": "test-project",
+	})
+	if r.OK {
+		t.Fatal("expected error for missing chat_id")
+	}
+	if !strings.Contains(r.Error, "chat_id") {
+		t.Fatalf("error = %q, want chat_id required", r.Error)
+	}
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"chat_id": "oc_chat",
+	})
+	if r.OK {
+		t.Fatal("expected error for missing project")
+	}
+}
+
+func TestMgmt_Subscription_CreateInvalidInterval(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_chat:bot",
+		"interval":    "not-a-cron",
+	})
+	if r.OK {
+		t.Fatal("expected error for invalid cron interval")
+	}
+	if !strings.Contains(r.Error, "invalid interval") {
+		t.Fatalf("error = %q, want invalid interval", r.Error)
+	}
+}
+
+func TestMgmt_Subscription_CreateDuplicate(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	body := map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_dup",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_dup:bot",
+	}
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", body)
+	if !r.OK {
+		t.Fatalf("first create failed: %s", r.Error)
+	}
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", body)
+	if r.OK {
+		t.Fatal("expected error for duplicate subscription")
+	}
+	if !strings.Contains(r.Error, "already exists") {
+		t.Fatalf("error = %q, want already exists", r.Error)
+	}
+}
+
+func TestMgmt_Subscription_ListWithProject(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_chat_a",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_chat_a:bot",
+	})
+	mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "other-project",
+		"chat_id":     "oc_chat_b",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_chat_b:bot",
+	})
+
+	r := mgmtGet(t, ts.URL+"/api/v1/subscription", "tok")
+	if !r.OK {
+		t.Fatalf("list all failed: %s", r.Error)
+	}
+	var allData struct {
+		Subscriptions []*Subscription `json:"subscriptions"`
+	}
+	json.Unmarshal(r.Data, &allData)
+	if len(allData.Subscriptions) != 2 {
+		t.Fatalf("expected 2 subscriptions, got %d", len(allData.Subscriptions))
+	}
+
+	r = mgmtGet(t, ts.URL+"/api/v1/subscription?project=test-project", "tok")
+	if !r.OK {
+		t.Fatalf("list by project failed: %s", r.Error)
+	}
+	var projData struct {
+		Subscriptions []*Subscription `json:"subscriptions"`
+	}
+	json.Unmarshal(r.Data, &projData)
+	if len(projData.Subscriptions) != 1 {
+		t.Fatalf("expected 1 subscription for test-project, got %d", len(projData.Subscriptions))
+	}
+}
+
+func TestMgmt_Subscription_GetByID(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_get_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_get_chat:bot",
+		"filter":      "error",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtGet(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok")
+	if !r.OK {
+		t.Fatalf("get by id failed: %s", r.Error)
+	}
+	var got Subscription
+	json.Unmarshal(r.Data, &got)
+	if got.ID != created.ID {
+		t.Fatalf("id = %q, want %q", got.ID, created.ID)
+	}
+	if got.Filter != "error" {
+		t.Fatalf("filter = %q, want error", got.Filter)
+	}
+
+	r = mgmtGet(t, ts.URL+"/api/v1/subscription/nonexistent", "tok")
+	if r.OK {
+		t.Fatal("expected 404 for nonexistent subscription")
+	}
+}
+
+func TestMgmt_Subscription_Update(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_upd_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_upd_chat:bot",
+		"filter":      "old",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok", map[string]any{
+		"filter": "new",
+	})
+	if !r.OK {
+		t.Fatalf("update failed: %s", r.Error)
+	}
+	var updated Subscription
+	json.Unmarshal(r.Data, &updated)
+	if updated.Filter != "new" {
+		t.Fatalf("filter after update = %q, want new", updated.Filter)
+	}
+
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/nonexistent", "tok", map[string]any{"filter": "x"})
+	if r.OK {
+		t.Fatal("expected 404 for nonexistent subscription update")
+	}
+}
+
+func TestMgmt_Subscription_Delete(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_del_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_del_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtDelete(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok")
+	if !r.OK {
+		t.Fatalf("delete failed: %s", r.Error)
+	}
+
+	r = mgmtGet(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok")
+	if r.OK {
+		t.Fatal("expected 404 after deletion")
+	}
+
+	r = mgmtDelete(t, ts.URL+"/api/v1/subscription/nonexistent", "tok")
+	if r.OK {
+		t.Fatal("expected 404 for deleting nonexistent subscription")
+	}
+}
+
+func TestMgmt_Subscription_Enable(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_en_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_en_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtPatch(t, ts.URL+"/api/v1/subscription/"+created.ID, "tok", map[string]any{
+		"enabled": false,
+	})
+	if !r.OK {
+		t.Fatalf("disable failed: %s", r.Error)
+	}
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription/"+created.ID+"/enable", "tok", nil)
+	if !r.OK {
+		t.Fatalf("enable failed: %s", r.Error)
+	}
+	var enabled Subscription
+	json.Unmarshal(r.Data, &enabled)
+	if !enabled.Enabled {
+		t.Fatal("expected enabled=true after enable")
+	}
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription/nonexistent/enable", "tok", nil)
+	if r.OK {
+		t.Fatal("expected 404 for enabling nonexistent subscription")
+	}
+}
+
+func TestMgmt_Subscription_Disable(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_dis_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_dis_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription/"+created.ID+"/disable", "tok", nil)
+	if !r.OK {
+		t.Fatalf("disable failed: %s", r.Error)
+	}
+	var disabled Subscription
+	json.Unmarshal(r.Data, &disabled)
+	if disabled.Enabled {
+		t.Fatal("expected enabled=false after disable")
+	}
+}
+
+func TestMgmt_Subscription_Run(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	sm.RegisterEngine("test-project", NewEngine("test-project", &stubAgent{}, nil, "", LangEnglish))
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
+		"project":     "test-project",
+		"chat_id":     "oc_run_chat",
+		"platform":    "feishu",
+		"session_key": "feishu:oc_run_chat:bot",
+	})
+	if !r.OK {
+		t.Fatalf("create failed: %s", r.Error)
+	}
+	var created Subscription
+	json.Unmarshal(r.Data, &created)
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription/"+created.ID+"/run", "tok", nil)
+	if !r.OK {
+		t.Fatalf("run failed: %s", r.Error)
+	}
+
+	r = mgmtPost(t, ts.URL+"/api/v1/subscription/nonexistent/run", "tok", nil)
+	if r.OK {
+		t.Fatal("expected 404 for running nonexistent subscription")
+	}
+}
+
+func TestMgmt_Subscription_MethodNotAllowed(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	r := mgmtDelete(t, ts.URL+"/api/v1/subscription", "tok")
+	if r.OK {
+		t.Fatal("expected DELETE on /subscription to fail")
+	}
+
+	r = mgmtGet(t, ts.URL+"/api/v1/subscription/fakeid/enable", "tok")
+	if r.OK {
+		t.Fatal("expected GET on enable to fail")
+	}
+}
+
+func TestMgmt_Subscription_InvalidJSON(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/subscription", strings.NewReader("{bad"))
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var r mgmtResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	if r.OK {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestMgmt_Subscription_PatchInvalidJSON(t *testing.T) {
+	mgmt, ts, _ := testManagementServer(t, "tok")
+	store, err := NewSubscriptionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, t.TempDir())
+	mgmt.SetSubscriptionManager(sm)
+
+	req, _ := http.NewRequest("PATCH", ts.URL+"/api/v1/subscription/some-id", strings.NewReader("{bad"))
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var r mgmtResponse
+	json.NewDecoder(resp.Body).Decode(&r)
+	if r.OK {
+		t.Fatal("expected error for invalid JSON in PATCH")
 	}
 }

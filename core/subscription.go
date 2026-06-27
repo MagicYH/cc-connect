@@ -518,6 +518,16 @@ func (sm *SubscriptionManager) Store() *SubscriptionStore {
 	return sm.store
 }
 
+// RunSubscription triggers an immediate scan for the given subscription ID.
+// Returns ErrSubscriptionNotFound if the ID does not exist.
+func (sm *SubscriptionManager) RunSubscription(id string) error {
+	if sm.store.Get(id) == nil {
+		return ErrSubscriptionNotFound
+	}
+	go sm.executeScan(id)
+	return nil
+}
+
 func (sm *SubscriptionManager) executeScan(subID string) {
 	sub := sm.store.Get(subID)
 	if sub == nil {

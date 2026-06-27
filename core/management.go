@@ -44,10 +44,11 @@ type ManagementServer struct {
 	mu      sync.RWMutex
 	engines map[string]*Engine // project name → engine
 
-	cronScheduler      *CronScheduler
-	timerScheduler     *TimerScheduler
-	heartbeatScheduler *HeartbeatScheduler
-	bridgeServer       *BridgeServer
+	cronScheduler       *CronScheduler
+	timerScheduler      *TimerScheduler
+	heartbeatScheduler  *HeartbeatScheduler
+	bridgeServer        *BridgeServer
+	subscriptionManager *SubscriptionManager
 
 	setupFeishuSave      func(req FeishuSetupSaveRequest) error
 	setupWeixinSave      func(req WeixinSetupSaveRequest) error
@@ -93,9 +94,14 @@ func (m *ManagementServer) SetCronScheduler(cs *CronScheduler)           { m.cro
 func (m *ManagementServer) SetTimerScheduler(ts *TimerScheduler)         { m.timerScheduler = ts }
 func (m *ManagementServer) SetHeartbeatScheduler(hs *HeartbeatScheduler) { m.heartbeatScheduler = hs }
 func (m *ManagementServer) SetBridgeServer(bs *BridgeServer)             { m.bridgeServer = bs }
+func (m *ManagementServer) SetSubscriptionManager(sm *SubscriptionManager) {
+	m.subscriptionManager = sm
+}
+
 func (m *ManagementServer) SetSetupFeishuSave(fn func(FeishuSetupSaveRequest) error) {
 	m.setupFeishuSave = fn
 }
+
 func (m *ManagementServer) SetSetupWeixinSave(fn func(WeixinSetupSaveRequest) error) {
 	m.setupWeixinSave = fn
 }
@@ -145,10 +151,10 @@ type GlobalProviderInfo struct {
 		Model string `json:"model"`
 		Alias string `json:"alias,omitempty"`
 	} `json:"models,omitempty"`
-	Endpoints       map[string]string              `json:"endpoints,omitempty"`
-	AgentModels     map[string]string              `json:"agent_models,omitempty"`
-	AgentModelLists map[string][]GlobalModelEntry   `json:"agent_model_lists,omitempty"`
-	Codex           *GlobalCodexConfig              `json:"codex,omitempty"`
+	Endpoints       map[string]string             `json:"endpoints,omitempty"`
+	AgentModels     map[string]string             `json:"agent_models,omitempty"`
+	AgentModelLists map[string][]GlobalModelEntry `json:"agent_model_lists,omitempty"`
+	Codex           *GlobalCodexConfig            `json:"codex,omitempty"`
 }
 
 // GlobalModelEntry is a model entry inside AgentModelLists.
@@ -166,21 +172,27 @@ type GlobalCodexConfig struct {
 func (m *ManagementServer) SetListGlobalProviders(fn func() ([]GlobalProviderInfo, error)) {
 	m.listGlobalProviders = fn
 }
+
 func (m *ManagementServer) SetAddGlobalProvider(fn func(GlobalProviderInfo) error) {
 	m.addGlobalProvider = fn
 }
+
 func (m *ManagementServer) SetUpdateGlobalProvider(fn func(string, GlobalProviderInfo) error) {
 	m.updateGlobalProvider = fn
 }
+
 func (m *ManagementServer) SetRemoveGlobalProvider(fn func(string) error) {
 	m.removeGlobalProvider = fn
 }
+
 func (m *ManagementServer) SetFetchPresets(fn func() (*ProviderPresetsResponse, error)) {
 	m.fetchPresets = fn
 }
+
 func (m *ManagementServer) SetFetchSkillPresets(fn func() (*SkillPresetsResponse, error)) {
 	m.fetchSkillPresets = fn
 }
+
 func (m *ManagementServer) SetListCCSwitchProviders(fn func() ([]CCSwitchProviderInfo, error)) {
 	m.listCCSwitchProviders = fn
 }
@@ -250,6 +262,10 @@ func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 
 	// Bridge
 	mux.HandleFunc(prefix+"/bridge/adapters", m.wrap(m.handleBridgeAdapters))
+
+	// Subscriptions
+	mux.HandleFunc(prefix+"/subscription", m.wrap(m.handleSubscription))
+	mux.HandleFunc(prefix+"/subscription/", m.wrap(m.handleSubscriptionByID))
 
 	// Static file serving for cc-connect-web (SPA)
 	return m.withStaticFallback(mux)
@@ -1635,6 +1651,222 @@ func (m *ManagementServer) handleCronByID(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ── Subscription endpoints ─────────────────────────────────────
+
+func (m *ManagementServer) handleSubscription(w http.ResponseWriter, r *http.Request) {
+	if m.subscriptionManager == nil {
+		mgmtError(w, http.StatusServiceUnavailable, "subscription manager not available")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		project := r.URL.Query().Get("project")
+		var subs []*Subscription
+		if project != "" {
+			subs = m.subscriptionManager.Store().ListByProject(project)
+		} else {
+			subs = m.subscriptionManager.Store().ListAll()
+		}
+		mgmtJSON(w, http.StatusOK, map[string]any{"subscriptions": subs})
+
+	case http.MethodPost:
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		chatID, _ := req["chat_id"].(string)
+		project, _ := req["project"].(string)
+		if chatID == "" {
+			mgmtError(w, http.StatusBadRequest, "chat_id is required")
+			return
+		}
+		if project == "" {
+			mgmtError(w, http.StatusBadRequest, "project is required")
+			return
+		}
+
+		sub := &Subscription{
+			ID:               GenerateSubscriptionID(),
+			Project:          project,
+			ChatID:           chatID,
+			ChatName:         strVal(req, "chat_name"),
+			Platform:         strVal(req, "platform"),
+			SessionKey:       strVal(req, "session_key"),
+			Filter:           strVal(req, "filter"),
+			ExcludeFilter:    strVal(req, "exclude_filter"),
+			Prompt:           strVal(req, "prompt"),
+			Interval:         strVal(req, "interval"),
+			ConcurrencyLimit: intVal(req, "concurrency_limit"),
+			TimeoutMins:      intVal(req, "timeout_mins"),
+			Enabled:          true,
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
+		}
+		// Apply defaults
+		if sub.Prompt == "" {
+			sub.Prompt = "{{content}}"
+		}
+		if sub.Interval == "" {
+			sub.Interval = "*/2 * * * *"
+		}
+		if sub.ConcurrencyLimit == 0 {
+			sub.ConcurrencyLimit = 5
+		}
+		if sub.TimeoutMins == 0 {
+			sub.TimeoutMins = 30
+		}
+
+		if err := m.subscriptionManager.AddSubscription(sub); err != nil {
+			if errors.Is(err, ErrSubscriptionDuplicate) {
+				mgmtError(w, http.StatusConflict, err.Error())
+				return
+			}
+			mgmtError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		mgmtJSON(w, http.StatusOK, sub)
+
+	default:
+		mgmtError(w, http.StatusMethodNotAllowed, "GET or POST only")
+	}
+}
+
+func (m *ManagementServer) handleSubscriptionByID(w http.ResponseWriter, r *http.Request) {
+	if m.subscriptionManager == nil {
+		mgmtError(w, http.StatusServiceUnavailable, "subscription manager not available")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/subscription/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		mgmtError(w, http.StatusBadRequest, "subscription id required")
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) > 2 {
+		mgmtError(w, http.StatusNotFound, "unknown subscription route")
+		return
+	}
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+
+	// Action sub-routes (POST only)
+	if action != "" {
+		if r.Method != http.MethodPost {
+			mgmtError(w, http.StatusMethodNotAllowed, "POST only")
+			return
+		}
+		switch action {
+		case "enable":
+			if err := m.subscriptionManager.EnableSubscription(id); err != nil {
+				if errors.Is(err, ErrSubscriptionNotFound) {
+					mgmtError(w, http.StatusNotFound, err.Error())
+					return
+				}
+				mgmtError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			sub := m.subscriptionManager.Store().Get(id)
+			mgmtJSON(w, http.StatusOK, sub)
+
+		case "disable":
+			if err := m.subscriptionManager.DisableSubscription(id); err != nil {
+				if errors.Is(err, ErrSubscriptionNotFound) {
+					mgmtError(w, http.StatusNotFound, err.Error())
+					return
+				}
+				mgmtError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			sub := m.subscriptionManager.Store().Get(id)
+			mgmtJSON(w, http.StatusOK, sub)
+
+		case "run":
+			if err := m.subscriptionManager.RunSubscription(id); err != nil {
+				if errors.Is(err, ErrSubscriptionNotFound) {
+					mgmtError(w, http.StatusNotFound, err.Error())
+					return
+				}
+				mgmtError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			mgmtJSON(w, http.StatusAccepted, map[string]string{
+				"id":     id,
+				"status": "triggered",
+			})
+
+		default:
+			mgmtError(w, http.StatusNotFound, "unknown subscription action")
+		}
+		return
+	}
+
+	// CRUD by ID
+	switch r.Method {
+	case http.MethodGet:
+		sub := m.subscriptionManager.Store().Get(id)
+		if sub == nil {
+			mgmtError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		mgmtJSON(w, http.StatusOK, sub)
+
+	case http.MethodPatch:
+		var updates map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if err := m.subscriptionManager.Store().Update(id, updates); err != nil {
+			if errors.Is(err, ErrSubscriptionNotFound) {
+				mgmtError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			mgmtError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		sub := m.subscriptionManager.Store().Get(id)
+		mgmtJSON(w, http.StatusOK, sub)
+
+	case http.MethodDelete:
+		if err := m.subscriptionManager.RemoveSubscription(id); err != nil {
+			if errors.Is(err, ErrSubscriptionNotFound) {
+				mgmtError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			mgmtError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		mgmtOK(w, "subscription deleted")
+
+	default:
+		mgmtError(w, http.StatusMethodNotAllowed, "GET, PATCH, or DELETE only")
+	}
+}
+
+// strVal extracts a string value from a map, returning "" if missing or wrong type.
+func strVal(m map[string]any, key string) string {
+	v, _ := m[key].(string)
+	return v
+}
+
+// intVal extracts an int value from a map, returning 0 if missing or wrong type.
+func intVal(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
+}
+
 // ── Bridge endpoints ──────────────────────────────────────────
 
 func (m *ManagementServer) handleBridgeAdapters(w http.ResponseWriter, r *http.Request) {
@@ -1905,10 +2137,10 @@ func (m *ManagementServer) handleCCSwitchProviders(w http.ResponseWriter, r *htt
 // applying per-agent-type overrides for base_url, model, and models.
 func resolveGlobalProviderForAgent(g GlobalProviderInfo, agentType string) ProviderConfig {
 	pc := ProviderConfig{
-		Name:   g.Name,
-		APIKey: g.APIKey,
+		Name:    g.Name,
+		APIKey:  g.APIKey,
 		BaseURL: g.BaseURL,
-		Model:  g.Model,
+		Model:   g.Model,
 	}
 	if ep, ok := g.Endpoints[agentType]; ok && ep != "" {
 		pc.BaseURL = ep
