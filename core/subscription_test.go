@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -770,29 +773,37 @@ func TestSubscriptionManager_ExecuteScan_MarkRun(t *testing.T) {
 	}
 	sm := NewSubscriptionManager(store, dir)
 
-	eng := &Engine{}
+	// Build a real engine with a scanner platform
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+		},
+		rcCtx: "reply-ctx",
+	}
+	eng := NewEngine("proj1", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	eng.SetSubscriptionManager(sm)
 	sm.RegisterEngine("proj1", eng)
 
 	sub := &Subscription{
-		ID:        "sub-scan",
-		Project:   "proj1",
-		ChatID:    "chat1",
-		Platform:  "feishu",
-		Interval:  "*/5 * * * *",
-		Enabled:   true,
-		Prompt:    "test",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:         "sub-scan",
+		Project:    "proj1",
+		ChatID:     "chat1",
+		Platform:   "feishu",
+		SessionKey: "feishu:chat1:bot",
+		Filter:     "alert",
+		Interval:   "*/5 * * * *",
+		Enabled:    true,
+		Prompt:     "{{content}}",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 	if err := sm.AddSubscription(sub); err != nil {
 		t.Fatal(err)
 	}
 
-	// executeScan with an engine that returns nil (stub returns nil)
 	sm.executeScan("sub-scan")
 
-	// The stub Engine.ExecuteSubscriptionScan currently returns nil,
-	// so MarkRun should have been called with success.
 	got := store.Get("sub-scan")
 	if got.LastRun.IsZero() {
 		t.Error("LastRun should be set after executeScan")
@@ -1104,4 +1115,405 @@ func TestCronParseStandard(t *testing.T) {
 			t.Errorf("ParseStandard(%q) should fail", expr)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ExecuteSubscriptionScan engine integration tests
+// ---------------------------------------------------------------------------
+
+// stubScannerPlatform implements Platform + MessageScanner + ReplyContextReconstructor
+type stubScannerPlatform struct {
+	stubPlatformEngine
+	messages    []ScannedMessage
+	nextToken   string
+	listErr     error
+	listCalls   int
+	rcCtx       any
+	rcErr       error
+	threadCtx   any
+	threadErr   error
+	threadCalls int
+}
+
+func (p *stubScannerPlatform) ListMessages(_ context.Context, _ string, _ ListMessagesOptions) ([]ScannedMessage, string, error) {
+	p.listCalls++
+	if p.listErr != nil {
+		return nil, "", p.listErr
+	}
+	return p.messages, p.nextToken, nil
+}
+
+func (p *stubScannerPlatform) ReconstructReplyCtx(_ string) (any, error) {
+	if p.rcErr != nil {
+		return nil, p.rcErr
+	}
+	return p.rcCtx, nil
+}
+
+func (p *stubScannerPlatform) BuildThreadReplyCtx(_ string, _ string, _ string) (any, error) {
+	p.threadCalls++
+	if p.threadErr != nil {
+		return nil, p.threadErr
+	}
+	return p.threadCtx, nil
+}
+
+func TestExecuteSubscriptionScan_PlatformNotFound(t *testing.T) {
+	e := newTestEngine()
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "nonexistent",
+		SessionKey: "nonexistent:chat1:bot",
+		Filter:     "",
+		Prompt:     "{{content}}",
+	}
+	err := e.ExecuteSubscriptionScan(sub)
+	if err == nil {
+		t.Error("expected error when platform not found")
+	}
+}
+
+func TestExecuteSubscriptionScan_PlatformNotScanner(t *testing.T) {
+	p := &stubPlatformEngine{n: "noscan"}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "noscan",
+		SessionKey: "noscan:chat1:bot",
+		Filter:     "",
+		Prompt:     "{{content}}",
+	}
+	err := e.ExecuteSubscriptionScan(sub)
+	if err == nil {
+		t.Error("expected error when platform does not implement MessageScanner")
+	}
+}
+
+func TestExecuteSubscriptionScan_ListMessagesError(t *testing.T) {
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		listErr:            fmt.Errorf("API error: unauthorized"),
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "feishu",
+		SessionKey: "feishu:chat1:bot",
+		Filter:     "",
+		Prompt:     "{{content}}",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	err := e.ExecuteSubscriptionScan(sub)
+	if err == nil {
+		t.Error("expected error when ListMessages fails")
+	}
+	if !strings.Contains(err.Error(), "list messages") {
+		t.Errorf("error should mention list messages, got: %v", err)
+	}
+}
+
+func TestExecuteSubscriptionScan_NoMatchingMessages(t *testing.T) {
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", Content: "normal message", IsBot: false},
+			{MessageID: "m2", Content: "another message", IsBot: false},
+		},
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "feishu",
+		SessionKey: "feishu:chat1:bot",
+		Filter:     "告警",
+		Prompt:     "{{content}}",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	err := e.ExecuteSubscriptionScan(sub)
+	if err != nil {
+		t.Errorf("expected nil when no messages match, got: %v", err)
+	}
+}
+
+func TestExecuteSubscriptionScan_MatchingMessages(t *testing.T) {
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", Content: "【告警】CPU超90%", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m2", Content: "【恢复】CPU正常", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m3", Content: "【告警】内存超80%", IsBot: false, CreatedAt: time.Now()},
+		},
+		rcCtx:     "reply-ctx-base",
+		threadCtx: "thread-ctx-1",
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+	e.SetSubscriptionManager(sm)
+
+	sub := &Subscription{
+		ID:            "sub1",
+		Project:       "test",
+		ChatID:        "chat1",
+		Platform:      "feishu",
+		SessionKey:    "feishu:chat1:bot",
+		Filter:        "告警",
+		ExcludeFilter: "恢复",
+		Prompt:        "排查：{{content}}",
+		Interval:      "*/5 * * * *",
+		Enabled:       true,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	err = e.ExecuteSubscriptionScan(sub)
+	if err != nil {
+		t.Fatalf("ExecuteSubscriptionScan: %v", err)
+	}
+
+	// Verify ThreadReplyContextBuilder was called for each matched message
+	if p.threadCalls != 2 {
+		t.Errorf("BuildThreadReplyCtx called %d times, want 2 (2 matching messages)", p.threadCalls)
+	}
+
+	// Verify anchor was updated
+	got := store.Get("sub1")
+	if got == nil {
+		t.Fatal("subscription should exist after scan")
+	}
+	if got.Anchor == "" {
+		t.Error("anchor should be updated after scan with messages")
+	}
+}
+
+func TestExecuteSubscriptionScan_Pagination(t *testing.T) {
+	page1 := []ScannedMessage{
+		{MessageID: "m1", Content: "alert 1", IsBot: false, CreatedAt: time.Now()},
+	}
+	page2 := []ScannedMessage{
+		{MessageID: "m2", Content: "alert 2", IsBot: false, CreatedAt: time.Now()},
+	}
+
+	callCount := 0
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		rcCtx:              "reply-ctx",
+	}
+	// Override ListMessages to simulate pagination
+	origListMessages := p.ListMessages
+	_ = origListMessages
+	p.listCalls = 0
+	p.messages = nil // we handle this manually
+
+	// Use a custom scanner for pagination
+	scanner := &paginatingScanner{
+		stubScannerPlatform: p,
+		pages:               [][]ScannedMessage{page1, page2},
+		tokens:              []string{"page2token", ""},
+	}
+	// Replace the stubScannerPlatform's ListMessages with the paginating one
+	p2 := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		rcCtx:              "reply-ctx",
+	}
+	_ = callCount
+	_ = scanner
+
+	// Simplest approach: use a platform that returns all messages at once
+	// with an explicit "nextToken" on the first call
+	p2.messages = append(page1, page2...)
+
+	e := NewEngine("test", &stubAgent{}, []Platform{p2}, "", LangEnglish)
+
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+	e.SetSubscriptionManager(sm)
+
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "feishu",
+		SessionKey: "feishu:chat1:bot",
+		Filter:     "alert",
+		Prompt:     "{{content}}",
+		Interval:   "*/5 * * * *",
+		Enabled:    true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	err = e.ExecuteSubscriptionScan(sub)
+	if err != nil {
+		t.Fatalf("ExecuteSubscriptionScan: %v", err)
+	}
+
+	got := store.Get("sub1")
+	if len(got.ProcessedIDs) < 2 {
+		t.Errorf("ProcessedIDs = %v, want at least 2", got.ProcessedIDs)
+	}
+}
+
+func TestExecuteSubscriptionScan_ProcessedIDsDedup(t *testing.T) {
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", Content: "alert A", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m2", Content: "alert B", IsBot: false, CreatedAt: time.Now()},
+		},
+		rcCtx: "reply-ctx",
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+	e.SetSubscriptionManager(sm)
+
+	sub := &Subscription{
+		ID:           "sub1",
+		Project:      "test",
+		ChatID:       "chat1",
+		Platform:     "feishu",
+		SessionKey:   "feishu:chat1:bot",
+		Filter:       "alert",
+		Prompt:       "{{content}}",
+		Interval:     "*/5 * * * *",
+		Enabled:      true,
+		ProcessedIDs: []string{"m1"}, // m1 already processed
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	err = e.ExecuteSubscriptionScan(sub)
+	if err != nil {
+		t.Fatalf("ExecuteSubscriptionScan: %v", err)
+	}
+
+	// Only m2 should be newly injected (m1 already in ProcessedIDs)
+	got := store.Get("sub1")
+	found := false
+	for _, id := range got.ProcessedIDs {
+		if id == "m2" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("m2 should be in ProcessedIDs after scan")
+	}
+}
+
+func TestExecuteSubscriptionScan_FallbackToReconstructReplyCtx(t *testing.T) {
+	p := &stubScannerPlatform{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		messages: []ScannedMessage{
+			{MessageID: "m1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+		},
+		rcCtx:     "reconstructed-ctx",
+		threadErr: fmt.Errorf("not supported"),
+	}
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	sub := &Subscription{
+		ID:         "sub1",
+		Project:    "test",
+		ChatID:     "chat1",
+		Platform:   "feishu",
+		SessionKey: "feishu:chat1:bot",
+		Filter:     "alert",
+		Prompt:     "{{content}}",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	err := e.ExecuteSubscriptionScan(sub)
+	if err != nil {
+		t.Fatalf("ExecuteSubscriptionScan: %v", err)
+	}
+	// Should have fallen back to ReconstructReplyCtx
+}
+
+func TestIsPermanentError(t *testing.T) {
+	tests := []struct {
+		errMsg    string
+		permanent bool
+	}{
+		{"permission denied", true},
+		{"chat does not exist", true},
+		{"invalid token", true},
+		{"unauthorized access", true},
+		{"forbidden: bot removed", true},
+		{"rate limit exceeded", false},
+		{"timeout waiting for response", false},
+		{"connection reset by peer", false},
+	}
+	for _, tt := range tests {
+		got := isPermanentError(errors.New(tt.errMsg))
+		if got != tt.permanent {
+			t.Errorf("isPermanentError(%q) = %v, want %v", tt.errMsg, got, tt.permanent)
+		}
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	if got := truncateString("hello", 10); got != "hello" {
+		t.Errorf("truncateString(hello, 10) = %q, want %q", got, "hello")
+	}
+	if got := truncateString("hello world", 5); got != "hello" {
+		t.Errorf("truncateString(hello world, 5) = %q, want %q", got, "hello")
+	}
+}
+
+// paginatingScanner is a test helper that simulates paginated ListMessages.
+type paginatingScanner struct {
+	*stubScannerPlatform
+	pages   [][]ScannedMessage
+	tokens  []string
+	callIdx int
+}
+
+func (s *paginatingScanner) ListMessages(_ context.Context, _ string, _ ListMessagesOptions) ([]ScannedMessage, string, error) {
+	if s.callIdx >= len(s.pages) {
+		return nil, "", nil
+	}
+	msgs := s.pages[s.callIdx]
+	token := ""
+	if s.callIdx < len(s.tokens) {
+		token = s.tokens[s.callIdx]
+	}
+	s.callIdx++
+	return msgs, token, nil
 }

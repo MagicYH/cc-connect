@@ -236,10 +236,11 @@ type Engine struct {
 	displaySaveFunc  func(mode *string, thinkingMessages *bool, thinkingMaxLen, toolMaxLen *int, toolMessages *bool) error
 	configReloadFunc func() (*ConfigReloadResult, error)
 
-	hooks              *HookManager
-	cronScheduler      *CronScheduler
-	timerScheduler     *TimerScheduler
-	heartbeatScheduler *HeartbeatScheduler
+	hooks               *HookManager
+	cronScheduler       *CronScheduler
+	timerScheduler      *TimerScheduler
+	heartbeatScheduler  *HeartbeatScheduler
+	subscriptionManager *SubscriptionManager
 
 	commands *CommandRegistry
 	skills   *SkillRegistry
@@ -882,6 +883,10 @@ func (e *Engine) AddPlatform(p Platform) {
 
 func (e *Engine) SetCronScheduler(cs *CronScheduler) {
 	e.cronScheduler = cs
+}
+
+func (e *Engine) SetSubscriptionManager(sm *SubscriptionManager) {
+	e.subscriptionManager = sm
 }
 
 func (e *Engine) SetTimerScheduler(ts *TimerScheduler) {
@@ -16225,8 +16230,175 @@ func lastActiveToolSummary(steps []ToolStep) string {
 	return ""
 }
 
-// ExecuteSubscriptionScan runs a subscription scan cycle. Stub — full implementation in Task 5.
+// ExecuteSubscriptionScan runs a full subscription scan cycle:
+//  1. Resolve the platform from the subscription's SessionKey
+//  2. Check MessageScanner capability
+//  3. List messages from the platform (with pagination)
+//  4. Filter messages using the subscription's filter/exclude/processedIDs
+//  5. For each matched message, build a prompt, resolve reply context, and
+//     inject into an agent session
+//  6. Update the anchor and processed IDs
 func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
-	slog.Info("subscription: scan stub", "subscription_id", sub.ID, "project", sub.Project)
+	// 1. Resolve platform
+	sessionKey := sub.SessionKey
+	platformName := ""
+	if idx := strings.Index(sessionKey, ":"); idx > 0 {
+		platformName = sessionKey[:idx]
+	}
+
+	var targetPlatform Platform
+	for _, p := range e.platforms {
+		if p.Name() == platformName {
+			targetPlatform = p
+			break
+		}
+	}
+	if targetPlatform == nil {
+		return fmt.Errorf("subscription: platform %q not found for session %q", platformName, sessionKey)
+	}
+
+	// 2. Check MessageScanner capability
+	scanner, ok := targetPlatform.(MessageScanner)
+	if !ok {
+		return fmt.Errorf("subscription: platform %q does not support MessageScanner", platformName)
+	}
+
+	// 3. List messages with pagination
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	var allMsgs []ScannedMessage
+	opts := ListMessagesOptions{
+		PageSize: 50,
+	}
+	if sub.Anchor != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, sub.Anchor); err == nil {
+			opts.Since = ts
+		} else {
+			// Fallback: 2-minute lookback for empty/invalid anchor
+			opts.Since = time.Now().Add(-2 * time.Minute)
+		}
+	} else {
+		opts.Since = time.Now().Add(-2 * time.Minute)
+	}
+
+	for {
+		msgs, nextToken, err := scanner.ListMessages(ctx, sub.ChatID, opts)
+		if err != nil {
+			return fmt.Errorf("subscription: list messages: %w", err)
+		}
+		allMsgs = append(allMsgs, msgs...)
+		if nextToken == "" {
+			break
+		}
+		opts.PageToken = nextToken
+	}
+
+	// 4. Filter messages
+	matched := filterMessages(allMsgs, sub.Filter, sub.ExcludeFilter, sub.ProcessedIDs)
+	if len(matched) == 0 {
+		slog.Info("subscription: no matching messages", "subscription_id", sub.ID, "total_scanned", len(allMsgs))
+		return nil
+	}
+
+	slog.Info("subscription: matched messages", "subscription_id", sub.ID, "matched", len(matched), "total_scanned", len(allMsgs))
+
+	// 5. Inject matched messages into agent sessions
+	threadBuilder, hasThreadBuilder := targetPlatform.(ThreadReplyContextBuilder)
+
+	var newProcessedIDs []string
+	newProcessedIDs = append(newProcessedIDs, sub.ProcessedIDs...)
+
+	for _, msg := range matched {
+		// Build reply context: prefer thread reply, then fallback to reconstruct
+		var replyCtx any
+		if hasThreadBuilder {
+			if rc, err := threadBuilder.BuildThreadReplyCtx(sub.SessionKey, sub.ChatID, msg.MessageID); err == nil {
+				replyCtx = rc
+			}
+		}
+		if replyCtx == nil {
+			if reconstructor, ok := targetPlatform.(ReplyContextReconstructor); ok {
+				if rc, err := reconstructor.ReconstructReplyCtx(sub.SessionKey); err == nil {
+					replyCtx = rc
+				}
+			}
+		}
+
+		prompt := sub.BuildPrompt(msg.Content)
+
+		// Create a side session for this subscription message (like cron)
+		session := e.sessions.NewSideSession(sub.SessionKey, "subscription-"+sub.ID)
+		if !session.TryLock() {
+			slog.Warn("subscription: session busy, skipping message", "subscription_id", sub.ID, "message_id", msg.MessageID)
+			continue
+		}
+
+		iKey := fmt.Sprintf("%s#subscription:%s", sub.SessionKey, session.ID)
+
+		// Log the injection
+		if e.subscriptionManager != nil {
+			if logErr := e.subscriptionManager.AppendLog(LogEntry{
+				SubscriptionID: sub.ID,
+				MessageID:      msg.MessageID,
+				ChatID:         sub.ChatID,
+				Content:        truncateString(msg.Content, 200),
+				SessionID:      session.ID,
+				Status:         "submitted",
+				CreatedAt:      time.Now(),
+			}); logErr != nil {
+				slog.Warn("subscription: failed to append log", "error", logErr)
+			}
+		}
+
+		newProcessedIDs = append(newProcessedIDs, msg.MessageID)
+
+		// Inject the message into the agent session (fire-and-forget goroutine)
+		go func(p Platform, prompt string, replyCtx any, session *Session, iKey string, sessionKey string) {
+			msg := &Message{
+				Content:    prompt,
+				ReplyCtx:   replyCtx,
+				SessionKey: sessionKey,
+				UserID:     "subscription",
+				UserName:   "subscription",
+			}
+			e.processInteractiveMessageWith(p, msg, session, e.agent, e.sessions, iKey, "", sessionKey)
+			session.Unlock()
+			e.cleanupInteractiveState(iKey)
+		}(targetPlatform, prompt, replyCtx, session, iKey, sub.SessionKey)
+	}
+
+	// 6. Update anchor and processed IDs
+	if len(allMsgs) > 0 {
+		lastMsg := allMsgs[len(allMsgs)-1]
+		newAnchor := lastMsg.CreatedAt.Format(time.RFC3339Nano)
+		if e.subscriptionManager != nil {
+			if err := e.subscriptionManager.store.UpdateAnchor(sub.ID, newAnchor, newProcessedIDs); err != nil {
+				slog.Error("subscription: failed to update anchor", "subscription_id", sub.ID, "error", err)
+			}
+		}
+	}
+
 	return nil
+}
+
+// isPermanentError classifies an error as permanent (auth, permissions, bot removed)
+// vs transient (rate limit, network timeout).
+func isPermanentError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	permanentMarkers := []string{"permission", "not exist", "token", "unauthorized", "forbidden"}
+	for _, marker := range permanentMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// truncateString truncates a string to at most n bytes.
+func truncateString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
