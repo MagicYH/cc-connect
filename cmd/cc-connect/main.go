@@ -960,6 +960,26 @@ func main() {
 		}
 	}
 
+	// Start subscription manager (opt-in per project via subscriptions_enabled)
+	var subMgr *core.SubscriptionManager
+	for _, proj := range cfg.Projects {
+		if proj.IsSubscriptionsEnabled() {
+			subStore, subErr := core.NewSubscriptionStore(cfg.DataDir)
+			if subErr != nil {
+				slog.Warn("subscription store unavailable", "error", subErr)
+				break
+			}
+			subMgr = core.NewSubscriptionManager(subStore, cfg.DataDir)
+			break
+		}
+	}
+	if subMgr != nil {
+		for i, e := range engines {
+			subMgr.RegisterEngine(cfg.Projects[i].Name, e)
+			e.SetSubscriptionManager(subMgr)
+		}
+	}
+
 	// Start timer scheduler
 	timerStore, err := core.NewTimerStore(cfg.DataDir)
 	if err != nil {
@@ -1006,6 +1026,12 @@ func main() {
 	if cronSched != nil {
 		if err := cronSched.Start(); err != nil {
 			slog.Error("cron scheduler start failed", "error", err)
+		}
+	}
+
+	if subMgr != nil {
+		if err := subMgr.Start(); err != nil {
+			slog.Error("subscription manager start failed", "error", err)
 		}
 	}
 
@@ -1083,6 +1109,9 @@ func main() {
 			mgmtSrv.SetTimerScheduler(timerSched)
 		}
 		mgmtSrv.SetHeartbeatScheduler(heartbeatSched)
+		if subMgr != nil {
+			mgmtSrv.SetSubscriptionManager(subMgr)
+		}
 		if bridgeSrv != nil {
 			mgmtSrv.SetBridgeServer(bridgeSrv)
 		}
@@ -1305,6 +1334,9 @@ func main() {
 	heartbeatSched.Stop()
 	if timerSched != nil {
 		timerSched.Stop()
+	}
+	if subMgr != nil {
+		subMgr.Stop()
 	}
 	if cronSched != nil {
 		cronSched.Stop()

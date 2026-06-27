@@ -1032,13 +1032,14 @@ func (e *Engine) SetAdminFrom(adminFrom string) {
 
 // privilegedCommands are commands that require admin_from authorization.
 var privilegedCommands = map[string]bool{
-	"shell":   true,
-	"show":    true,
-	"dir":     true,
-	"restart": true,
-	"upgrade": true,
-	"web":     true,
-	"diff":    true,
+	"shell":     true,
+	"show":      true,
+	"dir":       true,
+	"restart":   true,
+	"upgrade":   true,
+	"web":       true,
+	"diff":      true,
+	"subscribe": true,
 }
 
 // isAdmin checks whether the given user ID is authorized for privileged commands.
@@ -5941,6 +5942,7 @@ var builtinCommands = []struct {
 	{[]string{"provider"}, "provider"},
 	{[]string{"memory"}, "memory"},
 	{[]string{"cron"}, "cron"},
+	{[]string{"subscribe", "sub"}, "subscribe"},
 	{[]string{"timer", "at", "remind"}, "timer"},
 	{[]string{"heartbeat", "hb"}, "heartbeat"},
 	{[]string{"compress", "compact"}, "compress"},
@@ -6158,6 +6160,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdMemory(p, msg, args)
 	case "cron":
 		e.cmdCron(p, msg, args)
+	case "subscribe":
+		e.cmdSubscribe(p, msg, args)
 	case "timer":
 		e.cmdTimer(p, msg, args)
 	case "heartbeat":
