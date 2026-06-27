@@ -16226,6 +16226,7 @@ func lastActiveToolSummary(steps []ToolStep) string {
 }
 
 // ExecuteSubscriptionScan runs a subscription scan cycle. Stub — full implementation in Task 5.
-func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) {
+func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 	slog.Info("subscription: scan stub", "subscription_id", sub.ID, "project", sub.Project)
+	return nil
 }

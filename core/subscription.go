@@ -64,7 +64,7 @@ type SubscriptionStore struct {
 func NewSubscriptionStore(dataDir string) (*SubscriptionStore, error) {
 	dir := filepath.Join(dataDir, "subscriptions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("subscription: create data dir: %w", err)
 	}
 	path := filepath.Join(dir, "jobs.json")
 	s := &SubscriptionStore{path: path}
@@ -190,13 +190,13 @@ func (s *SubscriptionStore) Update(id string, fields map[string]any) error {
 			newProject := sub.Project
 			newChatID := sub.ChatID
 			if v, ok := fields["project"]; ok {
-				if s, ok := v.(string); ok {
-					newProject = s
+				if val, ok := v.(string); ok {
+					newProject = val
 				}
 			}
 			if v, ok := fields["chat_id"]; ok {
-				if s, ok := v.(string); ok {
-					newChatID = s
+				if val, ok := v.(string); ok {
+					newChatID = val
 				}
 			}
 			if newProject != sub.Project || newChatID != sub.ChatID {
@@ -298,6 +298,12 @@ func updateSubscriptionField(sub *Subscription, field string, value any) error {
 
 // UpdateAnchor atomically updates the anchor and processed IDs for a subscription.
 func (s *SubscriptionStore) UpdateAnchor(id string, anchor string, processedIDs []string) error {
+	// Prune to max 100 entries
+	const maxProcessedIDs = 100
+	if len(processedIDs) > maxProcessedIDs {
+		processedIDs = processedIDs[len(processedIDs)-maxProcessedIDs:]
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, sub := range s.subs {
@@ -346,17 +352,26 @@ func (s *SubscriptionStore) MarkRun(id string, lastErr string, isPermanent bool)
 	return ErrSubscriptionNotFound
 }
 
-// filterMessages applies Filter and ExcludeFilter to scanned messages, excluding bot messages.
-func filterMessages(sub *Subscription, msgs []ScannedMessage) []ScannedMessage {
+// filterMessages applies Filter and ExcludeFilter to scanned messages, excluding
+// bot messages and already-processed message IDs.
+func filterMessages(msgs []ScannedMessage, filter string, excludeFilter string, processedIDs []string) []ScannedMessage {
+	processedSet := make(map[string]struct{}, len(processedIDs))
+	for _, id := range processedIDs {
+		processedSet[id] = struct{}{}
+	}
+
 	var matched []ScannedMessage
 	for _, msg := range msgs {
 		if msg.IsBot {
 			continue
 		}
-		if sub.Filter != "" && !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(sub.Filter)) {
+		if _, seen := processedSet[msg.MessageID]; seen {
 			continue
 		}
-		if sub.ExcludeFilter != "" && strings.Contains(strings.ToLower(msg.Content), strings.ToLower(sub.ExcludeFilter)) {
+		if filter != "" && !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(filter)) {
+			continue
+		}
+		if excludeFilter != "" && strings.Contains(strings.ToLower(msg.Content), strings.ToLower(excludeFilter)) {
 			continue
 		}
 		matched = append(matched, msg)
@@ -387,6 +402,7 @@ type SubscriptionManager struct {
 	engines map[string]*Engine
 	mu      sync.RWMutex
 	entries map[string]cron.EntryID
+	running sync.Map // map[string]bool — subscription ID → is running
 	logsDir string
 }
 
@@ -418,6 +434,7 @@ func (sm *SubscriptionManager) Start() error {
 		}
 	}
 	sm.cron.Start()
+	slog.Info("subscription: manager started", "subscriptions", len(sm.store.ListAll()))
 	return nil
 }
 
@@ -445,8 +462,11 @@ func (sm *SubscriptionManager) scheduleSubscription(sub *Subscription) error {
 	return nil
 }
 
-// AddSubscription adds a new subscription and schedules it if enabled.
+// AddSubscription validates the interval, adds a new subscription, and schedules it if enabled.
 func (sm *SubscriptionManager) AddSubscription(sub *Subscription) error {
+	if _, err := cron.ParseStandard(sub.Interval); err != nil {
+		return fmt.Errorf("invalid interval %q: %w", sub.Interval, err)
+	}
 	if err := sm.store.Add(sub); err != nil {
 		return err
 	}
@@ -469,14 +489,13 @@ func (sm *SubscriptionManager) RemoveSubscription(id string) error {
 
 // EnableSubscription enables a subscription and schedules it.
 func (sm *SubscriptionManager) EnableSubscription(id string) error {
+	if err := sm.store.Update(id, map[string]any{"enabled": true}); err != nil {
+		return err
+	}
 	sub := sm.store.Get(id)
 	if sub == nil {
 		return ErrSubscriptionNotFound
 	}
-	if err := sm.store.Update(id, map[string]any{"enabled": true}); err != nil {
-		return err
-	}
-	sub.Enabled = true
 	return sm.scheduleSubscription(sub)
 }
 
@@ -507,15 +526,70 @@ func (sm *SubscriptionManager) executeScan(subID string) {
 	if !sub.Enabled {
 		return
 	}
+
+	// Skip if already running
+	if _, loaded := sm.running.LoadOrStore(subID, true); loaded {
+		slog.Warn("subscription: skipping scan, previous scan still running", "id", subID)
+		return
+	}
+	defer sm.running.Delete(subID)
+
 	sm.mu.RLock()
 	engine, ok := sm.engines[sub.Project]
 	sm.mu.RUnlock()
 	if !ok {
 		slog.Error("subscription: engine not found", "subscription_id", subID, "project", sub.Project)
 		sm.store.MarkRun(subID, fmt.Sprintf("project %q not found", sub.Project), true)
+		sm.unscheduleIfDisabled(subID)
 		return
 	}
-	go engine.ExecuteSubscriptionScan(sub)
+
+	slog.Info("subscription: executing scan", "id", subID, "project", sub.Project)
+
+	// Snapshot the subscription to avoid data race
+	snapshot := *sub
+	snapshot.ProcessedIDs = append([]string(nil), sub.ProcessedIDs...)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- engine.ExecuteSubscriptionScan(&snapshot)
+	}()
+
+	var err error
+	if sub.TimeoutMins > 0 {
+		timeout := time.Duration(sub.TimeoutMins) * time.Minute
+		select {
+		case err = <-done:
+		case <-time.After(timeout):
+			err = fmt.Errorf("scan timed out after %v", timeout)
+		}
+	} else {
+		err = <-done
+	}
+
+	if err != nil {
+		sm.store.MarkRun(subID, err.Error(), true)
+		slog.Error("subscription: scan failed", "id", subID, "error", err)
+	} else {
+		sm.store.MarkRun(subID, "", false)
+		slog.Info("subscription: scan completed", "id", subID)
+	}
+
+	sm.unscheduleIfDisabled(subID)
+}
+
+// unscheduleIfDisabled removes the cron entry for a subscription that was
+// auto-disabled by MarkRun (ConsecutiveErrors >= 10).
+func (sm *SubscriptionManager) unscheduleIfDisabled(subID string) {
+	if updated := sm.store.Get(subID); updated != nil && !updated.Enabled {
+		sm.mu.Lock()
+		if entryID, ok := sm.entries[subID]; ok {
+			sm.cron.Remove(entryID)
+			delete(sm.entries, subID)
+		}
+		sm.mu.Unlock()
+		slog.Warn("subscription: auto-disabled after consecutive errors", "id", subID)
+	}
 }
 
 // AppendLog appends a log entry to the subscription's log file.
@@ -524,7 +598,10 @@ func (sm *SubscriptionManager) AppendLog(entry LogEntry) error {
 		return err
 	}
 	path := filepath.Join(sm.logsDir, entry.SubscriptionID+".log")
-	data, _ := json.Marshal(entry)
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("subscription: marshal log entry: %w", err)
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

@@ -1,9 +1,14 @@
 package core
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 func newTestSubscription(id, project, chatID string) *Subscription {
@@ -14,7 +19,7 @@ func newTestSubscription(id, project, chatID string) *Subscription {
 		Platform:   "feishu",
 		SessionKey: "feishu:" + chatID,
 		Prompt:     "check alerts",
-		Interval:   "5m",
+		Interval:   "*/5 * * * *",
 		Enabled:    true,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -152,6 +157,40 @@ func TestSubscriptionStore_UpdateAnchor(t *testing.T) {
 	// Nonexistent subscription
 	if err := store.UpdateAnchor("nope", "x", nil); err == nil {
 		t.Error("UpdateAnchor on nonexistent ID should return error")
+	}
+}
+
+func TestSubscriptionStore_UpdateAnchor_PruneProcessedIDs(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sub := newTestSubscription("sub-prune", "proj1", "chat1")
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create 150 IDs
+	ids := make([]string, 150)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("id%d", i)
+	}
+	if err := store.UpdateAnchor("sub-prune", "anchor-big", ids); err != nil {
+		t.Fatal(err)
+	}
+
+	got := store.Get("sub-prune")
+	if len(got.ProcessedIDs) != 100 {
+		t.Errorf("ProcessedIDs length = %d, want 100 (pruned from 150)", len(got.ProcessedIDs))
+	}
+	// Should keep the last 100 (id50..id149)
+	if got.ProcessedIDs[0] != "id50" {
+		t.Errorf("first ProcessedID = %q, want %q", got.ProcessedIDs[0], "id50")
+	}
+	if got.ProcessedIDs[99] != "id149" {
+		t.Errorf("last ProcessedID = %q, want %q", got.ProcessedIDs[99], "id149")
 	}
 }
 
@@ -391,7 +430,7 @@ func TestSubscriptionStore_Update(t *testing.T) {
 
 	if err := store.Update("sub-upd", map[string]any{
 		"prompt":   "updated prompt",
-		"interval": "10m",
+		"interval": "*/10 * * * *",
 		"enabled":  false,
 	}); err != nil {
 		t.Fatal(err)
@@ -401,8 +440,8 @@ func TestSubscriptionStore_Update(t *testing.T) {
 	if got.Prompt != "updated prompt" {
 		t.Errorf("prompt = %q, want %q", got.Prompt, "updated prompt")
 	}
-	if got.Interval != "10m" {
-		t.Errorf("interval = %q, want %q", got.Interval, "10m")
+	if got.Interval != "*/10 * * * *" {
+		t.Errorf("interval = %q, want %q", got.Interval, "*/10 * * * *")
 	}
 	if got.Enabled {
 		t.Error("enabled should be false after update")
@@ -478,8 +517,7 @@ func TestSubscriptionFilter(t *testing.T) {
 		{MessageID: "m3", Content: "今日天气不错", IsBot: false},
 		{MessageID: "m4", Content: "Bot消息", IsBot: true},
 	}
-	sub := &Subscription{Filter: "告警", ExcludeFilter: "恢复"}
-	matched := filterMessages(sub, msgs)
+	matched := filterMessages(msgs, "告警", "恢复", nil)
 	if len(matched) != 1 || matched[0].MessageID != "m1" {
 		t.Errorf("filterMessages = %v, want 1 match with m1", matched)
 	}
@@ -490,10 +528,21 @@ func TestSubscriptionFilterEmpty(t *testing.T) {
 		{MessageID: "m1", Content: "消息1", IsBot: false},
 		{MessageID: "m2", Content: "消息2", IsBot: true},
 	}
-	sub := &Subscription{Filter: "", ExcludeFilter: ""}
-	matched := filterMessages(sub, msgs)
+	matched := filterMessages(msgs, "", "", nil)
 	if len(matched) != 1 {
 		t.Errorf("filterMessages empty = %d, want 1 (bot excluded)", len(matched))
+	}
+}
+
+func TestSubscriptionFilter_ProcessedIDsDedup(t *testing.T) {
+	msgs := []ScannedMessage{
+		{MessageID: "m1", Content: "alert 1", IsBot: false},
+		{MessageID: "m2", Content: "alert 2", IsBot: false},
+		{MessageID: "m3", Content: "alert 3", IsBot: false},
+	}
+	matched := filterMessages(msgs, "", "", []string{"m1", "m3"})
+	if len(matched) != 1 || matched[0].MessageID != "m2" {
+		t.Errorf("filterMessages with processedIDs = %v, want 1 match with m2", matched)
 	}
 }
 
@@ -502,5 +551,557 @@ func TestBuildPrompt(t *testing.T) {
 	result := sub.BuildPrompt("CPU超过90%")
 	if result != "排查：CPU超过90%" {
 		t.Errorf("BuildPrompt = %q, want %q", result, "排查：CPU超过90%")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SubscriptionManager tests
+// ---------------------------------------------------------------------------
+
+// stubEngine is a minimal Engine that records ExecuteSubscriptionScan calls.
+type stubEngine struct {
+	mu       sync.Mutex
+	calls    []string // subscription IDs that were scanned
+	err      error    // error to return from ExecuteSubscriptionScan
+	delay    time.Duration
+	sessions map[string]*AgentSession
+}
+
+func (se *stubEngine) ExecuteSubscriptionScan(sub *Subscription) error {
+	se.mu.Lock()
+	se.calls = append(se.calls, sub.ID)
+	err := se.err
+	delay := se.delay
+	se.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return err
+}
+
+func newStubEngine() *stubEngine {
+	return &stubEngine{
+		sessions: make(map[string]*AgentSession),
+	}
+}
+
+func newTestManager(t *testing.T) (*SubscriptionManager, *stubEngine) {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+	eng := newStubEngine()
+	sm.RegisterEngine("proj1", &Engine{})
+	return sm, eng
+}
+
+func TestSubscriptionManager_AddSubscription_ValidInterval(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub1",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   false,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatalf("AddSubscription with valid interval: %v", err)
+	}
+}
+
+func TestSubscriptionManager_AddSubscription_InvalidInterval(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub2",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "not-a-cron",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err == nil {
+		t.Error("AddSubscription with invalid interval should return error")
+	}
+}
+
+func TestSubscriptionManager_RemoveSubscription(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-rm",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sm.RemoveSubscription("sub-rm"); err != nil {
+		t.Fatalf("RemoveSubscription: %v", err)
+	}
+	if store.Get("sub-rm") != nil {
+		t.Error("subscription should be gone after RemoveSubscription")
+	}
+
+	// Remove nonexistent
+	if err := sm.RemoveSubscription("nope"); err == nil {
+		t.Error("RemoveSubscription on nonexistent should return error")
+	}
+}
+
+func TestSubscriptionManager_EnableDisableSubscription(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-en",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   false,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable
+	if err := sm.EnableSubscription("sub-en"); err != nil {
+		t.Fatalf("EnableSubscription: %v", err)
+	}
+	got := store.Get("sub-en")
+	if !got.Enabled {
+		t.Error("subscription should be enabled after EnableSubscription")
+	}
+	// Should have a cron entry
+	sm.mu.RLock()
+	_, hasEntry := sm.entries["sub-en"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Error("enabled subscription should have a cron entry")
+	}
+
+	// Disable
+	if err := sm.DisableSubscription("sub-en"); err != nil {
+		t.Fatalf("DisableSubscription: %v", err)
+	}
+	got = store.Get("sub-en")
+	if got.Enabled {
+		t.Error("subscription should be disabled after DisableSubscription")
+	}
+	sm.mu.RLock()
+	_, hasEntry = sm.entries["sub-en"]
+	sm.mu.RUnlock()
+	if hasEntry {
+		t.Error("disabled subscription should not have a cron entry")
+	}
+
+	// Enable nonexistent
+	if err := sm.EnableSubscription("nope"); err == nil {
+		t.Error("EnableSubscription on nonexistent should return error")
+	}
+}
+
+func TestSubscriptionManager_RegisterEngine(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	eng := &Engine{}
+	sm.RegisterEngine("myproject", eng)
+
+	sm.mu.RLock()
+	got, ok := sm.engines["myproject"]
+	sm.mu.RUnlock()
+	if !ok || got != eng {
+		t.Error("RegisterEngine did not register the engine correctly")
+	}
+}
+
+func TestSubscriptionManager_ExecuteScan_MarkRun(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	eng := &Engine{}
+	sm.RegisterEngine("proj1", eng)
+
+	sub := &Subscription{
+		ID:        "sub-scan",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// executeScan with an engine that returns nil (stub returns nil)
+	sm.executeScan("sub-scan")
+
+	// The stub Engine.ExecuteSubscriptionScan currently returns nil,
+	// so MarkRun should have been called with success.
+	got := store.Get("sub-scan")
+	if got.LastRun.IsZero() {
+		t.Error("LastRun should be set after executeScan")
+	}
+	if got.LastError != "" {
+		t.Errorf("LastError = %q after successful scan, want empty", got.LastError)
+	}
+}
+
+func TestSubscriptionManager_ExecuteScan_EngineNotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-noeng",
+		Project:   "proj_missing",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	sm.executeScan("sub-noeng")
+
+	got := store.Get("sub-noeng")
+	if got.LastError == "" {
+		t.Error("LastError should be set when engine not found")
+	}
+	if got.ConsecutiveErrors != 1 {
+		t.Errorf("ConsecutiveErrors = %d, want 1", got.ConsecutiveErrors)
+	}
+}
+
+func TestSubscriptionManager_ExecuteScan_ConcurrencyGuard(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-conc",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an in-progress scan
+	sm.running.Store("sub-conc", true)
+
+	// executeScan should skip
+	sm.executeScan("sub-conc")
+
+	// The running flag should still be there (we didn't delete it)
+	if _, ok := sm.running.Load("sub-conc"); !ok {
+		t.Error("running flag should still be set since scan was skipped")
+	}
+
+	// Clean up
+	sm.running.Delete("sub-conc")
+}
+
+func TestSubscriptionManager_ExecuteScan_AutoDisableUnschedule(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	// Use a project with no engine registered — this triggers the engine-not-found
+	// MarkRun path in executeScan, which calls unscheduleIfDisabled.
+	sub := &Subscription{
+		ID:                "sub-auto",
+		Project:           "proj_missing",
+		ChatID:            "chat1",
+		Platform:          "feishu",
+		Interval:          "*/5 * * * *",
+		Enabled:           true,
+		Prompt:            "test",
+		ConsecutiveErrors: 9,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have a cron entry
+	sm.mu.RLock()
+	_, hasEntry := sm.entries["sub-auto"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Fatal("subscription should have a cron entry before auto-disable")
+	}
+
+	// executeScan will hit engine-not-found, call MarkRun with isPermanent=true,
+	// pushing ConsecutiveErrors to 10, which auto-disables, then unscheduleIfDisabled
+	// should remove the cron entry.
+	sm.executeScan("sub-auto")
+
+	got := store.Get("sub-auto")
+	if got.Enabled {
+		t.Error("subscription should be auto-disabled after 10th consecutive error")
+	}
+
+	sm.mu.RLock()
+	_, hasEntry = sm.entries["sub-auto"]
+	sm.mu.RUnlock()
+	if hasEntry {
+		t.Error("auto-disabled subscription should have cron entry removed")
+	}
+}
+
+func TestSubscriptionManager_Start(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-start",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   true,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sm.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sm.Stop()
+
+	sm.mu.RLock()
+	_, hasEntry := sm.entries["sub-start"]
+	sm.mu.RUnlock()
+	if !hasEntry {
+		t.Error("enabled subscription should be scheduled after Start")
+	}
+}
+
+func TestSubscriptionManager_Store(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+	if sm.Store() != store {
+		t.Error("Store() should return the underlying store")
+	}
+}
+
+func TestSubscriptionManager_AppendLog(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	entry := LogEntry{
+		SubscriptionID: "sub-log",
+		MessageID:      "msg1",
+		ChatID:         "chat1",
+		Status:         "sent",
+		CreatedAt:      time.Now(),
+	}
+	if err := sm.AppendLog(entry); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	// Verify the log file exists
+	logPath := filepath.Join(sm.logsDir, "sub-log.log")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Errorf("log file should exist at %s: %v", logPath, err)
+	}
+}
+
+func TestSubscriptionManager_ExecuteScan_DisabledSub(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	sub := &Subscription{
+		ID:        "sub-dis",
+		Project:   "proj1",
+		ChatID:    "chat1",
+		Platform:  "feishu",
+		Interval:  "*/5 * * * *",
+		Enabled:   false,
+		Prompt:    "test",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := sm.AddSubscription(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	sm.executeScan("sub-dis")
+
+	got := store.Get("sub-dis")
+	if !got.LastRun.IsZero() {
+		t.Error("disabled subscription should not have LastRun set from executeScan")
+	}
+}
+
+func TestSubscriptionManager_ExecuteScan_NonexistentSub(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewSubscriptionManager(store, dir)
+
+	// Should not panic
+	sm.executeScan("nonexistent")
+}
+
+func TestSubscriptionManager_NewSubscriptionStore_WrappedError(t *testing.T) {
+	// We can't easily test MkdirAll failure with a temp dir, but we can at
+	// least verify that NewSubscriptionStore works normally.
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatalf("NewSubscriptionStore: %v", err)
+	}
+	if store == nil {
+		t.Error("store should not be nil")
+	}
+}
+
+func TestSubscriptionManager_Update_VariableShadowing(t *testing.T) {
+	// This test verifies that the Update method correctly handles the
+	// variable shadowing fix (val instead of s).
+	dir := t.TempDir()
+	store, err := NewSubscriptionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sub := newTestSubscription("sub-shadow", "proj1", "chat1")
+	if err := store.Add(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update project field — this used to shadow the receiver 's'
+	if err := store.Update("sub-shadow", map[string]any{"project": "proj2"}); err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get("sub-shadow")
+	if got.Project != "proj2" {
+		t.Errorf("project = %q, want %q", got.Project, "proj2")
+	}
+
+	// Update chat_id field too
+	if err := store.Update("sub-shadow", map[string]any{"chat_id": "chat2"}); err != nil {
+		t.Fatal(err)
+	}
+	got = store.Get("sub-shadow")
+	if got.ChatID != "chat2" {
+		t.Errorf("chat_id = %q, want %q", got.ChatID, "chat2")
+	}
+}
+
+// Verify cron.ParseStandard is used for interval validation
+func TestCronParseStandard(t *testing.T) {
+	valid := []string{"*/5 * * * *", "0 * * * *", "0 9 * * 1-5"}
+	for _, expr := range valid {
+		if _, err := cron.ParseStandard(expr); err != nil {
+			t.Errorf("ParseStandard(%q) should succeed: %v", expr, err)
+		}
+	}
+
+	invalid := []string{"not-a-cron", "60 * * * *"}
+	for _, expr := range invalid {
+		if _, err := cron.ParseStandard(expr); err == nil {
+			t.Errorf("ParseStandard(%q) should fail", expr)
+		}
 	}
 }
