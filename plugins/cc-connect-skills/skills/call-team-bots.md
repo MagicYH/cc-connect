@@ -16,8 +16,41 @@ Add team bots to a Feishu group chat and direct them to bind or route to a works
 
 ## Required Input
 
-**The user MUST provide the workspace name before proceeding.** If not provided, ask the user:
+**The user MUST provide the workspace path before proceeding.** If not provided, ask the user:
 - "Which workspace should the teammates bind to?"
+
+## Workspace Commands Reference
+
+The `/workspace` command (alias `/ws`) has multiple subcommands. Choose the right one based on the path type:
+
+| Command | Syntax | When to use |
+|---------|--------|-------------|
+| `bind` | `/workspace bind <name>` | Relative path under `base_dir` — resolves to `base_dir/<name>` |
+| `route` | `/workspace route <absolute-path>` | Absolute path starting with `/` — binds directly to that directory |
+| `init` | `/workspace init <git-url-or-dir>` | Clone a git repo (or bind a local dir) into `base_dir` |
+| `unbind` | `/workspace unbind` | Remove the channel's workspace binding |
+| `list` | `/workspace list` | List all bindings for the current project |
+| `shared bind` | `/workspace shared bind <name>` | Same as `bind` but for cross-project shared bindings |
+| `shared route` | `/workspace shared route <path>` | Same as `route` but for cross-project shared bindings |
+| (no subcommand) | `/workspace` | Show current binding info |
+
+**How to choose between `bind` and `route`:**
+
+```
+User provides a path
+├── Starts with "/" (absolute)
+│   └── Use /workspace route /absolute/path/to/project
+└── Does NOT start with "/" (relative)
+    └── Use /workspace bind relative-name
+        (resolves to base_dir/relative-name)
+```
+
+**Examples:**
+- User says "my-project" → `/workspace bind my-project` (binds to `base_dir/my-project`)
+- User says "/opt/workspaces/feature-x" → `/workspace route /opt/workspaces/feature-x`
+- User says "clone https://github.com/org/repo" → `/workspace init https://github.com/org/repo`
+
+**Prerequisite**: These commands only work when the project is configured with `mode = "multi-workspace"` and `base_dir` is set in config.toml.
 
 ## Steps
 
@@ -99,14 +132,14 @@ lark-cli auth login --device-code "DEVICE_CODE"
 
 ### 3. Add bots to the group chat
 
-Use `lark-cli im chat.members create` with `--as user` (not `--as bot`, which often lacks `im:chat.members:write_only` scope). **Exclude the current project's own bot from the add request** — it is already in the chat.
+Use `lark-cli im chat.members create` with `--as user` (not `--as bot`, which often lacks `im:chat.members:write_only` scope). **Include ALL team bot app_ids — the current project's own bot AND all teammates.** The current project's bot must be in the group to send @mention messages; without it, sending messages returns error 230002.
 
 ```bash
-# Use app_ids from step 1, minus the current project's own app_id
+# Include ALL app_ids — current project's bot + teammates
 lark-cli im chat.members create \
   --as user \
   --params "{\"chat_id\":\"$CHAT_ID\",\"member_id_type\":\"app_id\",\"succeed_type\":1}" \
-  --data '{"id_list":["cli_xxx","cli_yyy"]}'
+  --data '{"id_list":["cli_xxx","cli_yyy","cli_zzz"]}'
 ```
 
 `succeed_type=1` skips unavailable IDs gracefully. Max 5 bots per request; split if more.
@@ -121,7 +154,7 @@ First, get bot open_ids in the chat:
 lark-cli im chat.members bots "$CHAT_ID" --as bot --params "{\"chat_id\":\"$CHAT_ID\",\"member_id_type\":\"open_id\"}"
 ```
 
-Then send a post message with @mention for each bot:
+Then determine the correct workspace command (see "Workspace Commands Reference" above) and send a post message with @mention for each bot:
 
 ```bash
 TOKEN=$(python3 -c "
@@ -149,9 +182,9 @@ import json, urllib.request
 token = '$TOKEN'
 chat_id = '$CHAT_ID'
 bot_open_id = 'BOT_OPEN_ID'
-# Workspace commands (use the one the user specified):
-#   /workspace bind WORKSPACE_NAME
-#   /workspace route /absolute/path/to/project
+# Choose the right command:
+#   message_text = ' /workspace bind my-project'       # relative path under base_dir
+#   message_text = ' /workspace route /opt/my-project'  # absolute path
 message_text = ' /workspace bind WORKSPACE_NAME'
 
 content = json.dumps({
@@ -184,15 +217,19 @@ with urllib.request.urlopen(req) as resp:
 
 After execution, report:
 - Which bots were added to the group
-- Which bots received @mention messages
+- Which bots received @mention messages and which workspace command was sent
 - Any failures and their error codes
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
+| Using `/workspace bind` with absolute path | `bind` resolves relative to `base_dir`. Use `/workspace route` for absolute paths |
+| Using `/workspace route` with relative path | `route` requires absolute path starting with `/`. Use `/workspace bind` for relative names |
+| Excluding current project's bot from add request | You MUST add the current project's bot too — it needs to be in the group to send @mention messages. Error 230002 otherwise |
 | Using `--as bot` for chat.members.create | Use `--as user` — bot scope often lacks `im:chat.members:write_only` |
 | Plain text @mention | Bots ignore plain text @. Must use post (rich text) with `at` tag |
+| Using `open_id` field in `at` tag | Feishu requires `user_id` field (not `open_id`) in the `at` tag, even though the value is an open_id |
 | Wrong lark-cli profile active | Check `lark-cli profile list`, switch with `lark-cli profile use NAME` |
 | Passing chat_id as positional arg in old lark-cli | Use `--params` with `chat_id` field instead |
 | lark-cli path parameter errors (old versions) | Use `--params '{"chat_id":"..."}'` or upgrade lark-cli |
@@ -201,6 +238,7 @@ After execution, report:
 
 - `CC_SESSION_KEY` missing: ask user for chat_id
 - `99991672` (scope not enabled): switch to `--as user` or login with `--domain im`
+- `230002` (bot/user not in chat): add the current project's bot to the group first, then retry sending messages
 - `232011` (operator not in chat): add calling bot to chat first, then retry
 - `1063002` (permission denied on doc): user lacks manage permission on the doc
 - `1063003` (invalid operation on doc): member already has the permission
