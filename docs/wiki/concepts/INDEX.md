@@ -42,6 +42,7 @@
 - [Streaming](./streaming.md)
 - [Structured Logging](./structured-logging.md)
 - [STT Pipeline](./stt-pipeline.md)
+- [Subscription](./subscription.md)
 - [Timer Scheduler](./timer-scheduler.md)
 - [Timing-Safe Comparison](./timing-safe-comparison.md)
 - [TOCTOU](./toctou.md)

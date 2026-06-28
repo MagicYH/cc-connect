@@ -48,6 +48,7 @@ type ListMessagesOptions struct {
 	Since     time.Time
 	PageSize  int
 	PageToken string
+	Anchor    string // opaque anchor from a previous scan; platform interprets it
 }
 
 // MessageScanner is an optional interface for platforms that support

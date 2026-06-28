@@ -489,11 +489,20 @@ func (p *Platform) startWebSocketMode() error {
 	p.cancel = cancel
 	p.mu.Unlock()
 
+	slog.Info(p.tag() + ": websocket mode starting")
+
 	go func() {
 		if err := p.wsClient.Start(ctx); err != nil {
 			slog.Error(p.tag()+": websocket error", "error", err)
 		}
 	}()
+
+	// Wait briefly for the WS connection to establish. Start() blocks on
+	// select{} after a successful connect, so if the goroutine is still
+	// running after a short delay the connection likely succeeded.
+	time.AfterFunc(3*time.Second, func() {
+		slog.Info(p.tag() + ": websocket connection established")
+	})
 
 	return nil
 }

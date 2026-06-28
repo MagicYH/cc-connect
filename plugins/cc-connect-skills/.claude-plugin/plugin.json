@@ -1,0 +1,12 @@
+{
+  "name": "cc-connect-skills",
+  "version": "0.1.0",
+  "description": "Skills and tools for cc-connect development and operations",
+  "author": {
+    "name": "Hao Chen",
+    "email": "chenhao.magic@bytedance.com"
+  },
+  "homepage": "https://github.com/anthropics/cc-connect",
+  "license": "MIT",
+  "keywords": ["cc-connect", "feishu", "skills"]
+}

@@ -13,6 +13,7 @@ User-facing bot commands using kebab-case with `/` prefix, supporting prefix mat
 | `/model [switch <name>]` | View/switch model |
 | `/mode [name]` | View/switch permission mode |
 | `/cron add\|list\|exec\|del` | Scheduled tasks |
+| `/subscribe\|/sub <add\|list\|show\|enable\|disable\|del>` | Message subscriptions |
 | `/timer add\|list\|del` | One-shot timers |
 | `/provider list\|add\|remove\|switch` | API provider management |
 

@@ -10,7 +10,8 @@
       "Bash(awk '{print $1}')",
       "Bash(git fetch *)",
       "Read(//data00/home/chenhao.magic/**)",
-      "Bash(go build *)"
+      "Bash(go build *)",
+      "Bash(cc-connect daemon *)"
     ]
   }
 }
