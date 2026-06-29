@@ -2209,8 +2209,22 @@ func extractInteractiveCardText(content string) string {
 
 	var parts []string
 
+	// Extract header title (works for both Schema 2.0 and legacy cards).
+	if raw, ok := card["header"]; ok {
+		var header struct {
+			Title struct {
+				Content string `json:"content"`
+			} `json:"title"`
+		}
+		if json.Unmarshal(raw, &header) == nil && header.Title.Content != "" {
+			parts = append(parts, header.Title.Content)
+		}
+	}
+
+	hasBody := false
 	// Schema 2.0: body may use property.elements (standard) or direct elements (simplified).
 	if raw, ok := card["body"]; ok {
+		hasBody = true
 		var body struct {
 			Tag      string            `json:"tag"`
 			Elements []json.RawMessage `json:"elements"`
@@ -2227,18 +2241,8 @@ func extractInteractiveCardText(content string) string {
 		}
 	}
 
-	// Legacy: direct title string + flat/nested elements.
-	if len(parts) == 0 {
-		if raw, ok := card["header"]; ok {
-			var header struct {
-				Title struct {
-					Content string `json:"content"`
-				} `json:"title"`
-			}
-			if json.Unmarshal(raw, &header) == nil && header.Title.Content != "" {
-				parts = append(parts, header.Title.Content)
-			}
-		}
+	// Legacy: direct title string + flat/nested elements (only when no Schema 2.0 body).
+	if !hasBody {
 		if len(parts) == 0 {
 			if raw, ok := card["title"]; ok {
 				var title string

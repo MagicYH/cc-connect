@@ -521,8 +521,8 @@ func TestSubscriptionFilter(t *testing.T) {
 		{MessageID: "m3", Content: "今日天气不错", IsBot: false},
 		{MessageID: "m4", Content: "Bot消息", IsBot: true},
 	}
-	filterRe := regexp.MustCompile("(?i)告警")
-	excludeRe := regexp.MustCompile("(?i)恢复")
+	filterRe := regexp.MustCompile("告警")
+	excludeRe := regexp.MustCompile("恢复")
 	matched, err := filterMessages(msgs, filterRe, excludeRe, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -533,7 +533,8 @@ func TestSubscriptionFilter(t *testing.T) {
 }
 
 func TestSubscriptionFilter_CaseInsensitive(t *testing.T) {
-	sub := &Subscription{Filter: "warning", ExcludeFilter: "Recovered"}
+	// Users can opt into case-insensitive matching with (?i) prefix
+	sub := &Subscription{Filter: "(?i)warning", ExcludeFilter: "(?i)Recovered"}
 	if err := sub.compileFilters(); err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +553,7 @@ func TestSubscriptionFilter_CaseInsensitive(t *testing.T) {
 	}
 	for _, m := range matched {
 		if m.MessageID == "m3" {
-			t.Error("m3 should be excluded by case-insensitive 'Recovered' filter")
+			t.Error("m3 should be excluded by case-insensitive '(?i)Recovered' filter")
 		}
 	}
 }
