@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -515,12 +516,17 @@ func TestGenerateSubscriptionID(t *testing.T) {
 
 func TestSubscriptionFilter(t *testing.T) {
 	msgs := []ScannedMessage{
-		{MessageID: "m1", Content: "【告警】CPU超过90%", IsBot: false},
-		{MessageID: "m2", Content: "【恢复】CPU已正常", IsBot: false},
+		{MessageID: "m1", Content: "【告警】CPU超过90%", IsBot: true},
+		{MessageID: "m2", Content: "【恢复】CPU已正常", IsBot: true},
 		{MessageID: "m3", Content: "今日天气不错", IsBot: false},
 		{MessageID: "m4", Content: "Bot消息", IsBot: true},
 	}
-	matched := filterMessages(msgs, "告警", "恢复", nil)
+	filterRe := regexp.MustCompile("告警")
+	excludeRe := regexp.MustCompile("恢复")
+	matched, err := filterMessages(msgs, filterRe, excludeRe, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(matched) != 1 || matched[0].MessageID != "m1" {
 		t.Errorf("filterMessages = %v, want 1 match with m1", matched)
 	}
@@ -531,19 +537,42 @@ func TestSubscriptionFilterEmpty(t *testing.T) {
 		{MessageID: "m1", Content: "消息1", IsBot: false},
 		{MessageID: "m2", Content: "消息2", IsBot: true},
 	}
-	matched := filterMessages(msgs, "", "", nil)
-	if len(matched) != 1 {
-		t.Errorf("filterMessages empty = %d, want 1 (bot excluded)", len(matched))
+	matched, err := filterMessages(msgs, nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only IsBot=true messages are kept
+	if len(matched) != 1 || matched[0].MessageID != "m2" {
+		t.Errorf("filterMessages empty = %d, want 1 (only bot messages)", len(matched))
+	}
+}
+
+func TestSubscriptionFilterDashWildcard(t *testing.T) {
+	msgs := []ScannedMessage{
+		{MessageID: "m1", Content: "告警消息", IsBot: true},
+		{MessageID: "m2", Content: "normal message", IsBot: false},
+	}
+	// "-" filter is not compiled to regex (compileFilters skips it), so both
+	// filter and exclude are nil — only IsBot check applies
+	matched, err := filterMessages(msgs, nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matched) != 1 || matched[0].MessageID != "m1" {
+		t.Errorf("filterMessages dash = %d, want 1 (only bot messages)", len(matched))
 	}
 }
 
 func TestSubscriptionFilter_ProcessedIDsDedup(t *testing.T) {
 	msgs := []ScannedMessage{
-		{MessageID: "m1", Content: "alert 1", IsBot: false},
-		{MessageID: "m2", Content: "alert 2", IsBot: false},
-		{MessageID: "m3", Content: "alert 3", IsBot: false},
+		{MessageID: "m1", Content: "alert 1", IsBot: true},
+		{MessageID: "m2", Content: "alert 2", IsBot: true},
+		{MessageID: "m3", Content: "alert 3", IsBot: true},
 	}
-	matched := filterMessages(msgs, "", "", []string{"m1", "m3"})
+	matched, err := filterMessages(msgs, nil, nil, []string{"m1", "m3"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(matched) != 1 || matched[0].MessageID != "m2" {
 		t.Errorf("filterMessages with processedIDs = %v, want 1 match with m2", matched)
 	}
@@ -570,7 +599,7 @@ type stubEngine struct {
 	sessions map[string]*AgentSession
 }
 
-func (se *stubEngine) ExecuteSubscriptionScan(sub *Subscription) error {
+func (se *stubEngine) ExecuteSubscriptionScan(sub *Subscription, botID string) error {
 	se.mu.Lock()
 	se.calls = append(se.calls, sub.ID)
 	err := se.err
@@ -596,7 +625,7 @@ func newTestManager(t *testing.T) (*SubscriptionManager, *stubEngine) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	eng := newStubEngine()
 	sm.RegisterEngine("proj1", &Engine{})
 	return sm, eng
@@ -608,7 +637,7 @@ func TestSubscriptionManager_AddSubscription_ValidInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub1",
@@ -632,7 +661,7 @@ func TestSubscriptionManager_AddSubscription_InvalidInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub2",
@@ -656,7 +685,7 @@ func TestSubscriptionManager_RemoveSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-rm",
@@ -692,7 +721,7 @@ func TestSubscriptionManager_EnableDisableSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-en",
@@ -752,7 +781,7 @@ func TestSubscriptionManager_RegisterEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	eng := &Engine{}
 	sm.RegisterEngine("myproject", eng)
@@ -771,13 +800,13 @@ func TestSubscriptionManager_ExecuteScan_MarkRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	// Build a real engine with a scanner platform
 	p := &stubScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", Content: "alert", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx: "reply-ctx",
 	}
@@ -824,7 +853,7 @@ func TestSubscriptionManager_ExecuteScan_EngineNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-noeng",
@@ -858,7 +887,7 @@ func TestSubscriptionManager_ExecuteScan_ConcurrencyGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-conc",
@@ -896,7 +925,7 @@ func TestSubscriptionManager_ExecuteScan_AutoDisableUnschedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	// Use a project with no engine registered — this triggers the engine-not-found
 	// MarkRun path in executeScan, which calls unscheduleIfDisabled.
@@ -948,7 +977,7 @@ func TestSubscriptionManager_Start(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-start",
@@ -984,7 +1013,7 @@ func TestSubscriptionManager_Store(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	if sm.Store() != store {
 		t.Error("Store() should return the underlying store")
 	}
@@ -996,7 +1025,7 @@ func TestSubscriptionManager_AppendLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	entry := LogEntry{
 		SubscriptionID: "sub-log",
@@ -1022,7 +1051,7 @@ func TestSubscriptionManager_ExecuteScan_DisabledSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	sub := &Subscription{
 		ID:        "sub-dis",
@@ -1053,7 +1082,7 @@ func TestSubscriptionManager_ExecuteScan_NonexistentSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	// Should not panic
 	sm.executeScan("nonexistent")
@@ -1155,12 +1184,12 @@ func (p *stubScannerPlatform) ReconstructReplyCtx(_ string) (any, error) {
 	return p.rcCtx, nil
 }
 
-func (p *stubScannerPlatform) BuildThreadReplyCtx(_ string, _ string, _ string) (any, error) {
+func (p *stubScannerPlatform) BuildThreadReplyCtx(_ string, _ string, _ string) (any, string, error) {
 	p.threadCalls++
 	if p.threadErr != nil {
-		return nil, p.threadErr
+		return nil, "", p.threadErr
 	}
-	return p.threadCtx, nil
+	return p.threadCtx, "", nil
 }
 
 func TestExecuteSubscriptionScan_PlatformNotFound(t *testing.T) {
@@ -1174,7 +1203,7 @@ func TestExecuteSubscriptionScan_PlatformNotFound(t *testing.T) {
 		Filter:     "",
 		Prompt:     "{{content}}",
 	}
-	err := e.ExecuteSubscriptionScan(sub)
+	err := e.ExecuteSubscriptionScan(sub, "")
 	if err == nil {
 		t.Error("expected error when platform not found")
 	}
@@ -1192,7 +1221,7 @@ func TestExecuteSubscriptionScan_PlatformNotScanner(t *testing.T) {
 		Filter:     "",
 		Prompt:     "{{content}}",
 	}
-	err := e.ExecuteSubscriptionScan(sub)
+	err := e.ExecuteSubscriptionScan(sub, "")
 	if err == nil {
 		t.Error("expected error when platform does not implement MessageScanner")
 	}
@@ -1216,7 +1245,7 @@ func TestExecuteSubscriptionScan_ListMessagesError(t *testing.T) {
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	err := e.ExecuteSubscriptionScan(sub)
+	err := e.ExecuteSubscriptionScan(sub, "")
 	if err == nil {
 		t.Error("expected error when ListMessages fails")
 	}
@@ -1246,7 +1275,7 @@ func TestExecuteSubscriptionScan_NoMatchingMessages(t *testing.T) {
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	err := e.ExecuteSubscriptionScan(sub)
+	err := e.ExecuteSubscriptionScan(sub, "")
 	if err != nil {
 		t.Errorf("expected nil when no messages match, got: %v", err)
 	}
@@ -1256,9 +1285,9 @@ func TestExecuteSubscriptionScan_MatchingMessages(t *testing.T) {
 	p := &stubScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", Content: "【告警】CPU超90%", IsBot: false, CreatedAt: time.Now()},
-			{MessageID: "m2", Content: "【恢复】CPU正常", IsBot: false, CreatedAt: time.Now()},
-			{MessageID: "m3", Content: "【告警】内存超80%", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", Content: "【告警】CPU超90%", IsBot: true, CreatedAt: time.Now()},
+			{MessageID: "m2", Content: "【恢复】CPU正常", IsBot: true, CreatedAt: time.Now()},
+			{MessageID: "m3", Content: "【告警】内存超80%", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx:     "reply-ctx-base",
 		threadCtx: "thread-ctx-1",
@@ -1270,7 +1299,7 @@ func TestExecuteSubscriptionScan_MatchingMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	e.SetSubscriptionManager(sm)
 
 	sub := &Subscription{
@@ -1297,7 +1326,7 @@ func TestExecuteSubscriptionScan_MatchingMessages(t *testing.T) {
 		e.Stop()
 	}()
 
-	err = e.ExecuteSubscriptionScan(sub)
+	err = e.ExecuteSubscriptionScan(sub, "")
 	if err != nil {
 		t.Fatalf("ExecuteSubscriptionScan: %v", err)
 	}
@@ -1319,10 +1348,10 @@ func TestExecuteSubscriptionScan_MatchingMessages(t *testing.T) {
 
 func TestExecuteSubscriptionScan_Pagination(t *testing.T) {
 	page1 := []ScannedMessage{
-		{MessageID: "m1", Content: "alert 1", IsBot: false, CreatedAt: time.Now()},
+		{MessageID: "m1", Content: "alert 1", IsBot: true, CreatedAt: time.Now()},
 	}
 	page2 := []ScannedMessage{
-		{MessageID: "m2", Content: "alert 2", IsBot: false, CreatedAt: time.Now()},
+		{MessageID: "m2", Content: "alert 2", IsBot: true, CreatedAt: time.Now()},
 	}
 
 	// Use a paginating scanner that returns pages one at a time
@@ -1342,7 +1371,7 @@ func TestExecuteSubscriptionScan_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	e.SetSubscriptionManager(sm)
 
 	sub := &Subscription{
@@ -1367,7 +1396,7 @@ func TestExecuteSubscriptionScan_Pagination(t *testing.T) {
 		e.Stop()
 	}()
 
-	err = e.ExecuteSubscriptionScan(sub)
+	err = e.ExecuteSubscriptionScan(sub, "")
 	if err != nil {
 		t.Fatalf("ExecuteSubscriptionScan: %v", err)
 	}
@@ -1387,8 +1416,8 @@ func TestExecuteSubscriptionScan_ProcessedIDsDedup(t *testing.T) {
 	p := &stubScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", Content: "alert A", IsBot: false, CreatedAt: time.Now()},
-			{MessageID: "m2", Content: "alert B", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", Content: "alert A", IsBot: true, CreatedAt: time.Now()},
+			{MessageID: "m2", Content: "alert B", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx: "reply-ctx",
 	}
@@ -1399,7 +1428,7 @@ func TestExecuteSubscriptionScan_ProcessedIDsDedup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	e.SetSubscriptionManager(sm)
 
 	sub := &Subscription{
@@ -1425,7 +1454,7 @@ func TestExecuteSubscriptionScan_ProcessedIDsDedup(t *testing.T) {
 		e.Stop()
 	}()
 
-	err = e.ExecuteSubscriptionScan(sub)
+	err = e.ExecuteSubscriptionScan(sub, "")
 	if err != nil {
 		t.Fatalf("ExecuteSubscriptionScan: %v", err)
 	}
@@ -1448,7 +1477,7 @@ func TestExecuteSubscriptionScan_FallbackToReconstructReplyCtx(t *testing.T) {
 	p := &stubScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", Content: "alert", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx:     "reconstructed-ctx",
 		threadErr: fmt.Errorf("not supported"),
@@ -1470,7 +1499,7 @@ func TestExecuteSubscriptionScan_FallbackToReconstructReplyCtx(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		e.Stop()
 	}()
-	err := e.ExecuteSubscriptionScan(sub)
+	err := e.ExecuteSubscriptionScan(sub, "")
 	if err != nil {
 		t.Fatalf("ExecuteSubscriptionScan: %v", err)
 	}
@@ -1552,11 +1581,11 @@ func (p *integrationScannerPlatform) ReconstructReplyCtx(_ string) (any, error) 
 	return p.rcCtx, nil
 }
 
-func (p *integrationScannerPlatform) BuildThreadReplyCtx(_ string, _ string, messageID string) (any, error) {
+func (p *integrationScannerPlatform) BuildThreadReplyCtx(_ string, _ string, messageID string) (any, string, error) {
 	p.mu.Lock()
 	p.threadCalls = append(p.threadCalls, messageID)
 	p.mu.Unlock()
-	return p.threadCtx, nil
+	return p.threadCtx, "", nil
 }
 
 func (p *integrationScannerPlatform) getListCalls() []string {
@@ -1584,14 +1613,14 @@ func newIntegrationEnv(t *testing.T) (*SubscriptionManager, *Engine, *integratio
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	p := &integrationScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", ChatID: "chat1", Content: "alert: CPU high", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", ChatID: "chat1", Content: "alert: CPU high", IsBot: true, CreatedAt: time.Now()},
 			{MessageID: "m2", ChatID: "chat1", Content: "info: daily report", IsBot: false, CreatedAt: time.Now()},
-			{MessageID: "m3", ChatID: "chat1", Content: "alert: memory low", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m3", ChatID: "chat1", Content: "alert: memory low", IsBot: true, CreatedAt: time.Now()},
 			{MessageID: "m4", ChatID: "chat1", Content: "bot message", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx:     "reply-ctx-1",
@@ -1661,7 +1690,7 @@ func TestIntegration_SubscriptionFullScanCycle(t *testing.T) {
 		t.Errorf("ListMessages called with chatID %q, want %q", listCalls[0], "chat1")
 	}
 
-	//    b. filterMessages was applied — only m1 and m3 match "alert" (m4 is bot, m2 doesn't match)
+	//    b. filterMessages was applied — only bot messages matching "alert" pass (m1, m3); m2 is human, m4 doesn't match filter
 	threadCalls := p.getThreadCalls()
 	if len(threadCalls) != 2 {
 		t.Errorf("BuildThreadReplyCtx called %d times, want 2 (m1 and m3 match 'alert')", len(threadCalls))
@@ -1742,7 +1771,7 @@ func TestIntegration_SubscriptionAutoDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	// Engine not registered for the project — executeScan will hit engine-not-found
 	// which is classified as a permanent error, incrementing ConsecutiveErrors.
@@ -1813,13 +1842,13 @@ func TestIntegration_SubscriptionConcurrencyGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 
 	// Use a scanner platform that introduces delay so the scan takes time
 	p := &integrationScannerPlatform{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
 		messages: []ScannedMessage{
-			{MessageID: "m1", ChatID: "chat1", Content: "alert", IsBot: false, CreatedAt: time.Now()},
+			{MessageID: "m1", ChatID: "chat1", Content: "alert", IsBot: true, CreatedAt: time.Now()},
 		},
 		rcCtx:     "reply-ctx",
 		threadCtx: "thread-ctx",

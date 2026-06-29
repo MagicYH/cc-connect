@@ -664,6 +664,7 @@ const (
 	MsgSubShowFormat    MsgKey = "sub_show_format"
 	MsgSubHelp          MsgKey = "sub_help"
 	MsgSubAdminRequired MsgKey = "sub_admin_required"
+	MsgSubInvalidFilter MsgKey = "sub_invalid_filter"
 )
 
 var messages = map[MsgKey]map[Language]string{
@@ -1023,6 +1024,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del]\n  Manage command aliases (e.g. 帮助 → /help)\n\n" +
 			"/skills\n  List agent skills (from SKILL.md)\n\n" +
 			"/config [get|set|reload] [key] [value]\n  View/update runtime configuration\n\n" +
+			"/subscribe [add|list|del|enable|disable]\n  Manage subscriptions (auto-scan group messages)\n\n" +
 			"/bind [project|remove]\n  Manage relay binding in group chats\n\n" +
 			"/workspace [init]\n  Manage workspace\n\n" +
 			"/doctor\n  Run system diagnostics\n\n" +
@@ -1067,6 +1069,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del]\n  管理命令别名（如 帮助 → /help）\n\n" +
 			"/skills\n  列出 Agent Skills（来自 SKILL.md）\n\n" +
 			"/config [get|set|reload] [key] [value]\n  查看/修改运行时配置\n\n" +
+			"/subscribe [add|list|del|enable|disable]\n  管理订阅（自动扫描群消息）\n\n" +
 			"/bind [项目名|remove]\n  管理群聊中继绑定\n\n" +
 			"/workspace [init]\n  管理工作区\n\n" +
 			"/doctor\n  运行系统诊断\n\n" +
@@ -1110,6 +1113,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del]\n  管理命令別名（如 幫助 → /help）\n\n" +
 			"/skills\n  列出 Agent Skills（來自 SKILL.md）\n\n" +
 			"/config [get|set|reload] [key] [value]\n  查看/修改執行階段配置\n\n" +
+			"/subscribe [add|list|del|enable|disable]\n  管理訂閱（自動掃描群訊息）\n\n" +
 			"/bind [項目名|remove]\n  管理群聊中繼綁定\n\n" +
 			"/workspace [init]\n  管理工作區\n\n" +
 			"/doctor\n  執行系統診斷\n\n" +
@@ -1152,6 +1156,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del]\n  コマンドエイリアス管理（例: ヘルプ → /help）\n\n" +
 			"/skills\n  エージェントスキル一覧（SKILL.md から）\n\n" +
 			"/config [get|set|reload] [key] [value]\n  ランタイム設定の表示/変更\n\n" +
+			"/subscribe [add|list|del|enable|disable]\n  サブスクリプション管理（グループメッセージの自動スキャン）\n\n" +
 			"/bind [プロジェクト|remove]\n  グループチャットのリレー管理\n\n" +
 			"/workspace [init]\n  ワークスペース管理\n\n" +
 			"/doctor\n  システム診断を実行\n\n" +
@@ -1194,6 +1199,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/alias [add|del]\n  Gestionar alias de comandos (ej. ayuda → /help)\n\n" +
 			"/skills\n  Listar skills del agente (desde SKILL.md)\n\n" +
 			"/config [get|set|reload] [key] [value]\n  Ver/actualizar configuración en tiempo de ejecución\n\n" +
+			"/subscribe [add|list|del|enable|disable]\n  Gestionar suscripciones (escaneo automático de mensajes de grupo)\n\n" +
 			"/bind [proyecto|remove]\n  Gestionar retransmisión en chats de grupo\n\n" +
 			"/workspace [init]\n  Gestionar workspace\n\n" +
 			"/doctor\n  Ejecutar diagnósticos del sistema\n\n" +
@@ -4362,6 +4368,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "僅管理員可以管理訂閱。",
 		LangJapanese:           "管理者のみサブスクリプションを管理できます。",
 		LangSpanish:            "Solo los administradores pueden gestionar suscripciones.",
+	},
+	MsgSubInvalidFilter: {
+		LangEnglish:            "Invalid filter expression: %s",
+		LangChinese:            "过滤表达式无效: %s",
+		LangTraditionalChinese: "過濾表達式無效: %s",
+		LangJapanese:           "フィルター表現が無効です: %s",
+		LangSpanish:            "Expresión de filtro inválida: %s",
 	},
 }
 

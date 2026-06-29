@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,26 +19,29 @@ import (
 
 // Subscription represents a recurring scan of a messaging thread for new items.
 type Subscription struct {
-	ID                string    `json:"id"`
-	Project           string    `json:"project"`
-	ChatID            string    `json:"chat_id"`
-	ChatName          string    `json:"chat_name,omitempty"`
-	Platform          string    `json:"platform"`
-	SessionKey        string    `json:"session_key"`
-	Filter            string    `json:"filter,omitempty"`
-	ExcludeFilter     string    `json:"exclude_filter,omitempty"`
-	Prompt            string    `json:"prompt"`
-	Anchor            string    `json:"anchor,omitempty"`
-	Interval          string    `json:"interval"`
-	ConcurrencyLimit  int       `json:"concurrency_limit"`
-	TimeoutMins       int       `json:"timeout_mins"`
-	Enabled           bool      `json:"enabled"`
-	LastRun           time.Time `json:"last_run,omitempty"`
-	LastError         string    `json:"last_error,omitempty"`
-	ConsecutiveErrors int       `json:"consecutive_errors,omitempty"`
-	ProcessedIDs      []string  `json:"processed_ids,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID            string `json:"id"`
+	Project       string `json:"project"`
+	ChatID        string `json:"chat_id"`
+	ChatName      string `json:"chat_name,omitempty"`
+	Platform      string `json:"platform"`
+	SessionKey    string `json:"session_key"`
+	Filter        string `json:"filter,omitempty"`
+	ExcludeFilter string `json:"exclude_filter,omitempty"`
+	// Cached compiled regex (not serialized)
+	filterRe          *regexp.Regexp `json:"-"`
+	excludeFilterRe   *regexp.Regexp `json:"-"`
+	Prompt            string         `json:"prompt"`
+	Anchor            string         `json:"anchor,omitempty"`
+	Interval          string         `json:"interval"`
+	ConcurrencyLimit  int            `json:"concurrency_limit"`
+	TimeoutMins       int            `json:"timeout_mins"`
+	Enabled           bool           `json:"enabled"`
+	LastRun           time.Time      `json:"last_run,omitempty"`
+	LastError         string         `json:"last_error,omitempty"`
+	ConsecutiveErrors int            `json:"consecutive_errors,omitempty"`
+	ProcessedIDs      []string       `json:"processed_ids,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 // Default values shared between slash command and management API.
@@ -87,6 +91,11 @@ func (s *SubscriptionStore) load() {
 	}
 	if err := json.Unmarshal(data, &s.subs); err != nil {
 		slog.Error("subscription: failed to load jobs", "path", s.path, "error", err)
+	}
+	for _, sub := range s.subs {
+		if err := sub.compileFilters(); err != nil {
+			slog.Warn("subscription: filter compilation failed on load", "id", sub.ID, "error", err)
+		}
 	}
 }
 
@@ -217,6 +226,16 @@ func (s *SubscriptionStore) Update(id string, fields map[string]any) error {
 			for field, value := range fields {
 				if err := updateSubscriptionField(sub, field, value); err != nil {
 					return fmt.Errorf("update field %q: %w", field, err)
+				}
+			}
+			if _, ok := fields["filter"]; ok {
+				if err := sub.compileFilters(); err != nil {
+					return fmt.Errorf("recompile filters: %w", err)
+				}
+			}
+			if _, ok := fields["exclude_filter"]; ok {
+				if err := sub.compileFilters(); err != nil {
+					return fmt.Errorf("recompile filters: %w", err)
 				}
 			}
 			sub.UpdatedAt = time.Now()
@@ -360,9 +379,9 @@ func (s *SubscriptionStore) MarkRun(id string, lastErr string, isPermanent bool)
 	return ErrSubscriptionNotFound
 }
 
-// filterMessages applies Filter and ExcludeFilter to scanned messages, excluding
-// bot messages and already-processed message IDs.
-func filterMessages(msgs []ScannedMessage, filter string, excludeFilter string, processedIDs []string) []ScannedMessage {
+// filterMessages applies compiled filter/exclude regex to scanned messages,
+// excluding already-processed message IDs, non-bot messages, and self-bot messages.
+func filterMessages(msgs []ScannedMessage, filterRe, excludeRe *regexp.Regexp, processedIDs []string, botID string) ([]ScannedMessage, error) {
 	processedSet := make(map[string]struct{}, len(processedIDs))
 	for _, id := range processedIDs {
 		processedSet[id] = struct{}{}
@@ -370,26 +389,53 @@ func filterMessages(msgs []ScannedMessage, filter string, excludeFilter string, 
 
 	var matched []ScannedMessage
 	for _, msg := range msgs {
-		if msg.IsBot {
-			continue
-		}
 		if _, seen := processedSet[msg.MessageID]; seen {
 			continue
 		}
-		if filter != "" && !strings.Contains(strings.ToLower(msg.Content), strings.ToLower(filter)) {
+		// Only keep bot messages — subscriptions handle bot alerts
+		if !msg.IsBot {
 			continue
 		}
-		if excludeFilter != "" && strings.Contains(strings.ToLower(msg.Content), strings.ToLower(excludeFilter)) {
+		// Exclude self-bot messages
+		if botID != "" && msg.UserID == botID {
+			continue
+		}
+		if filterRe != nil && !filterRe.MatchString(msg.Content) {
+			continue
+		}
+		if excludeRe != nil && excludeRe.MatchString(msg.Content) {
 			continue
 		}
 		matched = append(matched, msg)
 	}
-	return matched
+	return matched, nil
 }
 
 // BuildPrompt replaces {{content}} in the subscription's prompt template.
 func (s *Subscription) BuildPrompt(content string) string {
 	return strings.ReplaceAll(s.Prompt, "{{content}}", content)
+}
+
+// compileFilters validates and caches compiled regex for Filter and ExcludeFilter.
+// When a filter is empty or "-", the corresponding compiled regex is cleared.
+func (s *Subscription) compileFilters() error {
+	s.filterRe = nil
+	if s.Filter != "" && s.Filter != "-" {
+		re, err := regexp.Compile(s.Filter)
+		if err != nil {
+			return fmt.Errorf("invalid filter regex %q: %w", s.Filter, err)
+		}
+		s.filterRe = re
+	}
+	s.excludeFilterRe = nil
+	if s.ExcludeFilter != "" && s.ExcludeFilter != "-" {
+		re, err := regexp.Compile(s.ExcludeFilter)
+		if err != nil {
+			return fmt.Errorf("invalid exclude_filter regex %q: %w", s.ExcludeFilter, err)
+		}
+		s.excludeFilterRe = re
+	}
+	return nil
 }
 
 // LogEntry records a subscription processing event.
@@ -405,23 +451,25 @@ type LogEntry struct {
 
 // SubscriptionManager manages subscription scheduling and execution.
 type SubscriptionManager struct {
-	store   *SubscriptionStore
-	cron    *cron.Cron
-	engines map[string]*Engine
-	mu      sync.RWMutex
-	entries map[string]cron.EntryID
-	running sync.Map // map[string]bool — subscription ID → is running
-	logsDir string
+	store         *SubscriptionStore
+	cron          *cron.Cron
+	engines       map[string]*Engine
+	mu            sync.RWMutex
+	entries       map[string]cron.EntryID
+	running       sync.Map // map[string]bool — subscription ID → is running
+	logsDir       string
+	botIDProvider BotIDProvider
 }
 
 // NewSubscriptionManager creates a new SubscriptionManager with the given store and data directory.
-func NewSubscriptionManager(store *SubscriptionStore, dataDir string) *SubscriptionManager {
+func NewSubscriptionManager(store *SubscriptionStore, dataDir string, botIDProvider BotIDProvider) *SubscriptionManager {
 	return &SubscriptionManager{
-		store:   store,
-		cron:    cron.New(),
-		engines: make(map[string]*Engine),
-		entries: make(map[string]cron.EntryID),
-		logsDir: filepath.Join(dataDir, "subscriptions", "logs"),
+		store:         store,
+		cron:          cron.New(),
+		engines:       make(map[string]*Engine),
+		entries:       make(map[string]cron.EntryID),
+		logsDir:       filepath.Join(dataDir, "subscriptions", "logs"),
+		botIDProvider: botIDProvider,
 	}
 }
 
@@ -588,9 +636,21 @@ func (sm *SubscriptionManager) executeScan(subID string) {
 	snapshot := *sub
 	snapshot.ProcessedIDs = append([]string(nil), sub.ProcessedIDs...)
 
+	if err := snapshot.compileFilters(); err != nil {
+		slog.Error("subscription: filter compilation failed", "id", subID, "error", err)
+		sm.store.MarkRun(subID, err.Error(), true)
+		sm.unscheduleIfDisabled(subID)
+		return
+	}
+
+	botID := ""
+	if sm.botIDProvider != nil {
+		botID = sm.botIDProvider.BotID()
+	}
+
 	done := make(chan error, 1)
 	go func() {
-		done <- engine.ExecuteSubscriptionScan(&snapshot)
+		done <- engine.ExecuteSubscriptionScan(&snapshot, botID)
 	}()
 
 	var err error

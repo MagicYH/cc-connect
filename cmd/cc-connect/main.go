@@ -969,7 +969,20 @@ func main() {
 				slog.Warn("subscription store unavailable", "error", subErr)
 				break
 			}
-			subMgr = core.NewSubscriptionManager(subStore, cfg.DataDir)
+			// Find a platform that implements BotIDProvider (e.g. Feishu)
+			var botIDProvider core.BotIDProvider
+			for i := range engines {
+				for _, p := range engines[i].Platforms() {
+					if bp, ok := p.(core.BotIDProvider); ok {
+						botIDProvider = bp
+						break
+					}
+				}
+				if botIDProvider != nil {
+					break
+				}
+			}
+			subMgr = core.NewSubscriptionManager(subStore, cfg.DataDir, botIDProvider)
 			break
 		}
 	}

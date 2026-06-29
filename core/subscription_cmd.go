@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -91,6 +92,20 @@ func (e *Engine) cmdSubscribeAdd(p Platform, msg *Message, args []string) {
 	}
 	if interval == "" {
 		interval = DefaultSubscriptionInterval
+	}
+
+	// Validate filter regex before creating subscription
+	if filter != "" && filter != "-" {
+		if _, err := regexp.Compile(filter); err != nil {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgSubInvalidFilter), err))
+			return
+		}
+	}
+	if excludeFilter != "" && excludeFilter != "-" {
+		if _, err := regexp.Compile(excludeFilter); err != nil {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgSubInvalidFilter), err))
+			return
+		}
 	}
 
 	chatID := extractChannelID(msg.SessionKey)
@@ -193,7 +208,8 @@ func (e *Engine) cmdSubscribeShow(p Platform, msg *Message, args []string) {
 		anchor = s.Anchor
 	}
 
-	e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgSubShowFormat),
+	e.reply(p, msg.ReplyCtx, fmt.Sprintf(
+		e.i18n.T(MsgSubShowFormat),
 		s.ID, s.ChatID, s.Filter, s.ExcludeFilter, s.Prompt,
 		CronExprToHuman(s.Interval, e.i18n.CurrentLang()),
 		s.Enabled, s.ConsecutiveErrors, lastRun, lastError, anchor,

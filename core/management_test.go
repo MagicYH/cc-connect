@@ -2877,7 +2877,7 @@ func TestMgmt_Subscription_ListEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtGet(t, ts.URL+"/api/v1/subscription", "tok")
@@ -2901,7 +2901,7 @@ func TestMgmt_Subscription_Create(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -2945,7 +2945,7 @@ func TestMgmt_Subscription_CreateDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -2979,7 +2979,7 @@ func TestMgmt_Subscription_CreateMissingRequired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3006,7 +3006,7 @@ func TestMgmt_Subscription_CreateInvalidInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3030,7 +3030,7 @@ func TestMgmt_Subscription_CreateDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	body := map[string]any{
@@ -3059,7 +3059,7 @@ func TestMgmt_Subscription_ListWithProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3106,7 +3106,7 @@ func TestMgmt_Subscription_GetByID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3147,7 +3147,7 @@ func TestMgmt_Subscription_Update(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3187,7 +3187,7 @@ func TestMgmt_Subscription_Delete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3224,7 +3224,7 @@ func TestMgmt_Subscription_Enable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3268,7 +3268,7 @@ func TestMgmt_Subscription_Disable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3300,7 +3300,7 @@ func TestMgmt_Subscription_Run(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	sm.RegisterEngine("test-project", NewEngine("test-project", &stubAgent{}, nil, "", LangEnglish))
 	mgmt.SetSubscriptionManager(sm)
 
@@ -3333,7 +3333,7 @@ func TestMgmt_Subscription_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtDelete(t, ts.URL+"/api/v1/subscription", "tok")
@@ -3353,7 +3353,7 @@ func TestMgmt_Subscription_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/subscription", strings.NewReader("{bad"))
@@ -3377,7 +3377,7 @@ func TestMgmt_Subscription_PatchInvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	req, _ := http.NewRequest("PATCH", ts.URL+"/api/v1/subscription/some-id", strings.NewReader("{bad"))
@@ -3401,7 +3401,7 @@ func TestMgmt_Subscription_CreateMissingSessionKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3423,7 +3423,7 @@ func TestMgmt_Subscription_PatchInvalidInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{
@@ -3468,7 +3468,7 @@ func TestMgmt_Subscription_PatchReschedulesCron(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, t.TempDir())
+	sm := NewSubscriptionManager(store, t.TempDir(), nil)
 	mgmt.SetSubscriptionManager(sm)
 
 	r := mgmtPost(t, ts.URL+"/api/v1/subscription", "tok", map[string]any{

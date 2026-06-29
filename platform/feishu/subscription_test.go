@@ -15,7 +15,7 @@ func TestSubscriptionInterfaceCompliance(t *testing.T) {
 func TestBuildThreadReplyCtx(t *testing.T) {
 	p := &Platform{platformName: "feishu"}
 
-	result, err := p.BuildThreadReplyCtx("feishu:oc_123:bot_abc", "oc_123", "om_456")
+	result, threadKey, err := p.BuildThreadReplyCtx("feishu:oc_123:bot_abc", "oc_123", "om_456")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,8 +31,14 @@ func TestBuildThreadReplyCtx(t *testing.T) {
 	if rc.messageID != "om_456" {
 		t.Errorf("messageID: got %q, want %q", rc.messageID, "om_456")
 	}
-	if rc.sessionKey != "feishu:oc_123:bot_abc" {
-		t.Errorf("sessionKey: got %q, want %q", rc.sessionKey, "feishu:oc_123:bot_abc")
+	if rc.sessionKey != "feishu:oc_123:root:om_456" {
+		t.Errorf("sessionKey: got %q, want %q", rc.sessionKey, "feishu:oc_123:root:om_456")
+	}
+	if !rc.forceThreadReply {
+		t.Errorf("forceThreadReply: got false, want true")
+	}
+	if threadKey != "feishu:oc_123:root:om_456" {
+		t.Errorf("threadSessionKey: got %q, want %q", threadKey, "feishu:oc_123:root:om_456")
 	}
 }
 

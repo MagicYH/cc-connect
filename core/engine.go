@@ -927,6 +927,11 @@ func (e *Engine) GetAgent() Agent {
 	return e.agent
 }
 
+// Platforms returns the list of platforms attached to this engine.
+func (e *Engine) Platforms() []Platform {
+	return e.platforms
+}
+
 // GetSessions returns the Engine's session manager (for testing).
 func (e *Engine) GetSessions() *SessionManager {
 	return e.sessions
@@ -3738,6 +3743,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 		if e.dataDir != "" {
 			envVars = append(envVars, "CC_DATA_DIR="+e.dataDir)
 		}
+		envVars = append(envVars, "CC_CONNECT_DAEMON_PID="+strconv.Itoa(os.Getpid()))
 		if exePath, err := os.Executable(); err == nil {
 			binDir := filepath.Dir(exePath)
 			if curPath := os.Getenv("PATH"); curPath != "" {
@@ -5942,7 +5948,7 @@ var builtinCommands = []struct {
 	{[]string{"provider"}, "provider"},
 	{[]string{"memory"}, "memory"},
 	{[]string{"cron"}, "cron"},
-	{[]string{"subscribe", "sub"}, "subscribe"},
+	{[]string{"subscribe"}, "subscribe"},
 	{[]string{"timer", "at", "remind"}, "timer"},
 	{[]string{"heartbeat", "hb"}, "heartbeat"},
 	{[]string{"compress", "compact"}, "compress"},
@@ -15036,6 +15042,7 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey,
 				envVars = append(envVars, "PATH="+binDir+string(filepath.ListSeparator)+curPath)
 			}
 		}
+		envVars = append(envVars, "CC_CONNECT_DAEMON_PID="+strconv.Itoa(os.Getpid()))
 		inj.SetSessionEnv(envVars)
 	}
 
@@ -16244,7 +16251,14 @@ func lastActiveToolSummary(steps []ToolStep) string {
 //  5. For each matched message, build a prompt, resolve reply context, and
 //     inject into an agent session (synchronous, respecting ConcurrencyLimit)
 //  6. Update the anchor and processed IDs
-func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
+func (e *Engine) ExecuteSubscriptionScan(sub *Subscription, botID string) error {
+	// Compile filter regex if not already cached
+	if sub.filterRe == nil && sub.excludeFilterRe == nil {
+		if err := sub.compileFilters(); err != nil {
+			return fmt.Errorf("subscription: filter compilation: %w", err)
+		}
+	}
+
 	// Emit hook event
 	e.hooks.Emit(HookEvent{
 		Event:      HookEventSubscriptionTriggered,
@@ -16319,7 +16333,18 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 	}
 
 	// 4. Filter messages
-	matched := filterMessages(allMsgs, sub.Filter, sub.ExcludeFilter, sub.ProcessedIDs)
+	matched, filterErr := filterMessages(allMsgs, sub.filterRe, sub.excludeFilterRe, sub.ProcessedIDs, botID)
+	if filterErr != nil {
+		return fmt.Errorf("subscription: filter messages: %w", filterErr)
+	}
+
+	slog.Info("subscription: filter results",
+		"subscription_id", sub.ID,
+		"total_scanned", len(allMsgs),
+		"filter_matched", len(matched),
+		"filter", sub.Filter,
+		"exclude_filter", sub.ExcludeFilter)
+
 	if len(matched) == 0 {
 		slog.Info("subscription: no matching messages", "subscription_id", sub.ID, "total_scanned", len(allMsgs))
 		return nil
@@ -16339,22 +16364,13 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 	)
 
 	for i, msg := range matched {
-		// ConcurrencyLimit check
-		if sub.ConcurrencyLimit > 0 {
-			activeCount := len(sessions.ListSessions(sub.SessionKey))
-			if activeCount >= sub.ConcurrencyLimit {
-				queuedCount = len(matched) - i
-				slog.Warn("subscription: concurrency limit reached, queuing remaining messages",
-					"subscription_id", sub.ID, "active", activeCount, "limit", sub.ConcurrencyLimit, "queued", queuedCount)
-				break
-			}
-		}
-
 		// Build reply context: prefer thread reply, then fallback to reconstruct
 		var replyCtx any
+		var threadSessionKey string
 		if hasThreadBuilder {
-			if rc, err := threadBuilder.BuildThreadReplyCtx(sub.SessionKey, sub.ChatID, msg.MessageID); err == nil {
+			if rc, tsk, err := threadBuilder.BuildThreadReplyCtx(sub.SessionKey, sub.ChatID, msg.MessageID); err == nil {
 				replyCtx = rc
+				threadSessionKey = tsk
 			}
 		}
 		if replyCtx == nil {
@@ -16365,16 +16381,32 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 			}
 		}
 
+		effectiveSessionKey := sub.SessionKey
+		if threadSessionKey != "" {
+			effectiveSessionKey = threadSessionKey
+		}
+
+		// ConcurrencyLimit check
+		if sub.ConcurrencyLimit > 0 {
+			activeCount := len(sessions.ListSessions(effectiveSessionKey))
+			if activeCount >= sub.ConcurrencyLimit {
+				queuedCount = len(matched) - i
+				slog.Warn("subscription: concurrency limit reached, queuing remaining messages",
+					"subscription_id", sub.ID, "active", activeCount, "limit", sub.ConcurrencyLimit, "queued", queuedCount)
+				break
+			}
+		}
+
 		prompt := sub.BuildPrompt(msg.Content)
 
 		// Create a side session for this subscription message (like cron)
-		session := sessions.NewSideSession(sub.SessionKey, "subscription-"+sub.ID)
+		session := sessions.NewSideSession(effectiveSessionKey, "subscription-"+sub.ID)
 		if !session.TryLock() {
 			slog.Warn("subscription: session busy, skipping message", "subscription_id", sub.ID, "message_id", msg.MessageID)
 			continue
 		}
 
-		iKey := fmt.Sprintf("%s#subscription:%s", sub.SessionKey, session.ID)
+		iKey := fmt.Sprintf("%s#subscription:%s", effectiveSessionKey, session.ID)
 		if workspaceDir != "" {
 			iKey = workspaceDir + ":" + iKey
 		}
@@ -16409,7 +16441,7 @@ func (e *Engine) ExecuteSubscriptionScan(sub *Subscription) error {
 			}
 			e.processInteractiveMessageWith(p, msg, session, agent, sessions, iKey, workspaceDir, sessionKey)
 			e.cleanupInteractiveState(iKey)
-		}(targetPlatform, prompt, replyCtx, session, iKey, sub.SessionKey)
+		}(targetPlatform, prompt, replyCtx, session, iKey, effectiveSessionKey)
 	}
 	wg.Wait()
 

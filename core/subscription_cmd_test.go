@@ -41,7 +41,7 @@ func newSubscribeTestEngine(t *testing.T) (*Engine, *spyPlatform, *SubscriptionM
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm := NewSubscriptionManager(store, dir)
+	sm := NewSubscriptionManager(store, dir, nil)
 	p := &spyPlatform{stubPlatformEngine: stubPlatformEngine{n: "feishu"}}
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
 	e.SetSubscriptionManager(sm)
@@ -50,9 +50,9 @@ func newSubscribeTestEngine(t *testing.T) (*Engine, *spyPlatform, *SubscriptionM
 
 func testSubMsg(userID string) *Message {
 	return &Message{
-		Content:   "/subscribe",
-		UserID:    userID,
-		ChatName:  "test-chat",
+		Content:    "/subscribe",
+		UserID:     userID,
+		ChatName:   "test-chat",
 		SessionKey: "feishu:oc_chat123:user456",
 	}
 }

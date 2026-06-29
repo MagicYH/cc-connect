@@ -60,7 +60,13 @@ type MessageScanner interface {
 // ThreadReplyContextBuilder is an optional interface for platforms that can
 // construct a reply context targeting a specific message for reply-in-thread.
 type ThreadReplyContextBuilder interface {
-	BuildThreadReplyCtx(sessionKey string, chatID string, messageID string) (any, error)
+	BuildThreadReplyCtx(sessionKey string, chatID string, messageID string) (replyCtx any, threadSessionKey string, err error)
+}
+
+// BotIDProvider returns the current bot's ID, used by subscription
+// filtering to exclude self-bot messages.
+type BotIDProvider interface {
+	BotID() string
 }
 
 // CronReplyTargetResolver is an optional interface for platforms that need to

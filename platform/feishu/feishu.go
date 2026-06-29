@@ -107,9 +107,10 @@ func init() {
 }
 
 type replyContext struct {
-	messageID  string
-	chatID     string
-	sessionKey string
+	messageID        string
+	chatID           string
+	sessionKey       string
+	forceThreadReply bool
 }
 
 func (rc *replyContext) ChatID() string { return rc.chatID }
@@ -354,6 +355,11 @@ func (p *Platform) getBotOpenID() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.botOpenID
+}
+
+// BotID returns the bot's open_id for subscription self-message filtering.
+func (p *Platform) BotID() string {
+	return p.getBotOpenID()
 }
 
 func (p *Platform) getBotName() string {
@@ -3475,13 +3481,14 @@ func stripMentions(text string, mentions []*larkim.MentionEvent, botOpenID, botN
 // TODO: Session-key derivation and reply-thread behavior are split across multiple code paths here.
 // Should revisit thread/root handling without changing thread_isolation=false behavior.
 func (p *Platform) makeSessionKey(msg *larkim.EventMessage, chatID, userID string) string {
+	// If message is inside a thread (has root_id), always route to thread session
+	if msg != nil && stringValue(msg.RootId) != "" {
+		return fmt.Sprintf("%s:%s:root:%s", p.tag(), chatID, stringValue(msg.RootId))
+	}
+	// threadIsolation: treat each top-level group message as its own thread
 	if p.threadIsolation && msg != nil && stringValue(msg.ChatType) == "group" {
-		rootID := stringValue(msg.RootId)
-		if rootID == "" {
-			rootID = stringValue(msg.MessageId)
-		}
-		if rootID != "" {
-			return fmt.Sprintf("%s:%s:root:%s", p.tag(), chatID, rootID)
+		if msgID := stringValue(msg.MessageId); msgID != "" {
+			return fmt.Sprintf("%s:%s:root:%s", p.tag(), chatID, msgID)
 		}
 	}
 	if p.shareSessionInChannel {
@@ -3506,7 +3513,13 @@ func (p *Platform) shouldReplyInThread(rc replyContext) bool {
 	if rc.messageID == "" {
 		return false
 	}
-	return p.threadIsolation && isThreadSessionKey(rc.sessionKey)
+	if isThreadSessionKey(rc.sessionKey) {
+		return true
+	}
+	if p.threadIsolation && !isP2PSessionKey(rc.sessionKey) {
+		return true
+	}
+	return false
 }
 
 // shouldUseThreadOrReplyAPI is true when we should call Im.Message.Reply (optionally with ReplyInThread).
@@ -3528,28 +3541,69 @@ func (p *Platform) buildReplyMessageReqBody(rc replyContext, msgType, content st
 	body := larkim.NewReplyMessageReqBodyBuilder().
 		MsgType(msgType).
 		Content(content)
-	if p.shouldReplyInThread(rc) {
+	if rc.forceThreadReply || p.shouldReplyInThread(rc) {
 		body.ReplyInThread(true)
 	}
 	return body.Build()
 }
+
+const (
+	errCodeThreadNotSupported  = 230071
+	errCodeAggregatedMsgThread = 230072
+)
 
 func (p *Platform) replyMessage(ctx context.Context, rc replyContext, msgType, content string) error {
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(rc.messageID).
 		Body(p.buildReplyMessageReqBody(rc, msgType, content)).
 		Build()
-	return p.withTransientRetry(ctx, "reply", func() error {
+
+	var lastResp *larkim.ReplyMessageResp
+	err := p.withTransientRetry(ctx, "reply", func() error {
 		return p.withFreshTenantAccessTokenRetry(ctx, "reply", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
-			resp, err := client.Im.Message.Reply(ctx, req, options...)
-			if err != nil {
-				return fmt.Errorf("%s: reply api call: %w", p.tag(), err)
+			var apiErr error
+			lastResp, apiErr = client.Im.Message.Reply(ctx, req, options...)
+			if apiErr != nil {
+				return fmt.Errorf("%s: reply api call: %w", p.tag(), apiErr)
 			}
-			if !resp.Success() {
-				return fmt.Errorf("%s: reply failed code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+			if !lastResp.Success() {
+				return fmt.Errorf("%s: reply failed code=%d msg=%s", p.tag(), lastResp.Code, lastResp.Msg)
 			}
 			return nil
 		})
+	})
+
+	if err == nil || !rc.forceThreadReply || lastResp == nil {
+		return err
+	}
+
+	if lastResp.Code != errCodeThreadNotSupported && lastResp.Code != errCodeAggregatedMsgThread {
+		return err
+	}
+
+	// Fallback: reply_in_thread not supported on this message type (e.g. aggregated/system messages).
+	// Retry without ReplyInThread.
+	slog.Warn("subscription: reply_in_thread not supported, falling back to normal reply",
+		"chat_id", rc.chatID, "message_id", rc.messageID, "code", lastResp.Code)
+
+	fallbackBody := larkim.NewReplyMessageReqBodyBuilder().
+		MsgType(msgType).
+		Content(content).
+		Build()
+	fallbackReq := larkim.NewReplyMessageReqBuilder().
+		MessageId(rc.messageID).
+		Body(fallbackBody).
+		Build()
+
+	return p.withFreshTenantAccessTokenRetry(ctx, "reply fallback", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+		resp, fallbackErr := client.Im.Message.Reply(ctx, fallbackReq, options...)
+		if fallbackErr != nil {
+			return fmt.Errorf("%s: reply fallback api call: %w", p.tag(), fallbackErr)
+		}
+		if !resp.Success() {
+			return fmt.Errorf("%s: reply fallback failed code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+		}
+		return nil
 	})
 }
 
@@ -3765,6 +3819,14 @@ func isThreadSessionKey(sessionKey string) bool {
 	}
 	_, ok := parseThreadRootID(parts[2])
 	return ok
+}
+
+func isP2PSessionKey(sessionKey string) bool {
+	parts := strings.SplitN(sessionKey, ":", 3)
+	if len(parts) != 3 {
+		return false
+	}
+	return strings.HasPrefix(parts[2], "ou_")
 }
 
 // feishuPreviewHandle stores the message ID for an editable preview message.

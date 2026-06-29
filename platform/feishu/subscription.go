@@ -106,8 +106,14 @@ func (p *Platform) ListMessages(ctx context.Context, chatID string, opts core.Li
 
 // BuildThreadReplyCtx constructs a replyContext targeting a specific message
 // for reply-in-thread. It implements core.ThreadReplyContextBuilder.
-func (p *Platform) BuildThreadReplyCtx(sessionKey string, chatID string, messageID string) (any, error) {
-	return replyContext{chatID: chatID, messageID: messageID, sessionKey: sessionKey}, nil
+func (p *Platform) BuildThreadReplyCtx(sessionKey string, chatID string, messageID string) (any, string, error) {
+	threadSessionKey := fmt.Sprintf("%s:%s:root:%s", p.tag(), chatID, messageID)
+	return replyContext{
+		chatID:           chatID,
+		messageID:        messageID,
+		sessionKey:       threadSessionKey,
+		forceThreadReply: true,
+	}, threadSessionKey, nil
 }
 
 // extractPlainText extracts human-readable text from a Feishu message body
