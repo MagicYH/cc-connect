@@ -521,14 +521,39 @@ func TestSubscriptionFilter(t *testing.T) {
 		{MessageID: "m3", Content: "今日天气不错", IsBot: false},
 		{MessageID: "m4", Content: "Bot消息", IsBot: true},
 	}
-	filterRe := regexp.MustCompile("告警")
-	excludeRe := regexp.MustCompile("恢复")
+	filterRe := regexp.MustCompile("(?i)告警")
+	excludeRe := regexp.MustCompile("(?i)恢复")
 	matched, err := filterMessages(msgs, filterRe, excludeRe, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(matched) != 1 || matched[0].MessageID != "m1" {
 		t.Errorf("filterMessages = %v, want 1 match with m1", matched)
+	}
+}
+
+func TestSubscriptionFilter_CaseInsensitive(t *testing.T) {
+	sub := &Subscription{Filter: "warning", ExcludeFilter: "Recovered"}
+	if err := sub.compileFilters(); err != nil {
+		t.Fatal(err)
+	}
+	msgs := []ScannedMessage{
+		{MessageID: "m1", Content: "WARNING: CPU high", IsBot: true},
+		{MessageID: "m2", Content: "warning: disk full", IsBot: true},
+		{MessageID: "m3", Content: "warning: recovered", IsBot: true},
+		{MessageID: "m4", Content: "normal info", IsBot: true},
+	}
+	matched, err := filterMessages(msgs, sub.filterRe, sub.excludeFilterRe, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matched) != 2 {
+		t.Errorf("filterMessages case-insensitive = %d matches, want 2 (m1, m2)", len(matched))
+	}
+	for _, m := range matched {
+		if m.MessageID == "m3" {
+			t.Error("m3 should be excluded by case-insensitive 'Recovered' filter")
+		}
 	}
 }
 

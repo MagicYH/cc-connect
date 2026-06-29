@@ -421,7 +421,7 @@ func (s *Subscription) BuildPrompt(content string) string {
 func (s *Subscription) compileFilters() error {
 	s.filterRe = nil
 	if s.Filter != "" && s.Filter != "-" {
-		re, err := regexp.Compile(s.Filter)
+		re, err := regexp.Compile("(?i)" + s.Filter)
 		if err != nil {
 			return fmt.Errorf("invalid filter regex %q: %w", s.Filter, err)
 		}
@@ -429,7 +429,7 @@ func (s *Subscription) compileFilters() error {
 	}
 	s.excludeFilterRe = nil
 	if s.ExcludeFilter != "" && s.ExcludeFilter != "-" {
-		re, err := regexp.Compile(s.ExcludeFilter)
+		re, err := regexp.Compile("(?i)" + s.ExcludeFilter)
 		if err != nil {
 			return fmt.Errorf("invalid exclude_filter regex %q: %w", s.ExcludeFilter, err)
 		}
