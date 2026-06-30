@@ -20,7 +20,7 @@ Manage tasks via Feishu group chat + Bitable, with hourly progress tracking.
 
 **REQUIRED SUB-SKILL:** Use cc-connect-skills:create-workspace-group to create the Feishu group, add all team bots + user, and send workspace bind commands.
 
-If the user does not specify a project directory, the default is `/home/{user}/Project/Source/Bytedance` (get `{user}` via `whoami`). This is passed as an absolute path, so the workspace command will be `/workspace route /home/{user}/Project/Source/Bytedance`.
+**IMPORTANT — Workspace must match the user's request.** The user will specify which workspace to use (e.g. "ws-dev-skills", "cc-connect"). Pass this to the create-workspace-group skill as the project directory. If the user gives a short name like "ws-dev-skills", treat it as a **relative path** → use `/workspace bind ws-dev-skills`. If the user gives an absolute path, use `/workspace route`. If the user does NOT specify a workspace, only then default to `/home/{user}/Project/Source/Bytedance` (absolute path → `/workspace route`).
 
 **NOTE:** The current bot cannot set its own workspace by @mentioning itself — self-@ is stripped by cc-connect. The create-workspace-group skill handles this by using another team bot's token to send the @mention to the current bot.
 
