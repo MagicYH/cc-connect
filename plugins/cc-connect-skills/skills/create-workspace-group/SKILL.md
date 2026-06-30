@@ -16,16 +16,19 @@ Create a Feishu group chat for a specific task, add team bots, and bind each bot
 
 ## Required Input
 
-Ask the user for these if not provided:
-
-| Input | Required | Example |
+| Input | Required | Default |
 |-------|----------|---------|
-| Group name | Yes | "Feature X Development" |
-| Project directory | Yes | "my-project" or "/absolute/path/to/project" |
+| Group name | Yes (derive from task if not specified) | — |
+| Project directory | No | `/home/{user}/Project/Source/Bytedance` |
 
 **Group name**: Derive from the task description if the user doesn't specify one. Keep it concise (max 60 chars).
 
-**Project directory**: This determines which `/workspace` command to use:
+**Project directory**: Determines which `/workspace` command to use. If the user does not specify a project directory:
+1. Run `whoami` to get the current username
+2. Default to `/home/{user}/Project/Source/Bytedance` as the absolute path
+3. This is an absolute path → use `/workspace route`
+
+If the user specifies a path:
 - Relative path (e.g. `my-project`) → `/workspace bind my-project` (resolves to `base_dir/my-project`)
 - Absolute path starting with `/` (e.g. `/opt/some/project`) → `/workspace route /opt/some/project`
 
@@ -126,11 +129,16 @@ lark-cli im chat.members bots "$CHAT_ID" --as bot --params "{\"chat_id\":\"$CHAT
 
 **Critical**: Plain text @mention does NOT trigger bot message receipt. Must use Feishu rich text (post) format with `at` tag.
 
-Determine the correct workspace command based on the user-provided path:
+Determine the workspace path and command:
+
+1. If user specified a project directory → use that path
+2. If user did not specify → default to `/home/{user}/Project/Source/Bytedance` (get `{user}` via `whoami`)
+
+Then determine the command based on the path type:
 
 ```
 Is the path absolute (starts with /)?
-├── Yes → /workspace route /absolute/path/to/project
+├── Yes → /workspace route /home/{user}/Project/Source/Bytedance
 └── No  → /workspace bind relative-name
 ```
 
@@ -168,10 +176,14 @@ token = '$TOKEN'
 chat_id = '$CHAT_ID'
 bot_open_id = 'BOT_OPEN_ID'
 
-# Choose the right command:
-#   message_text = ' /workspace bind my-project'       # for relative paths
-#   message_text = ' /workspace route /opt/my-project'  # for absolute paths
-message_text = ' /workspace bind WORKSPACE_NAME'
+# Choose the right command based on path type:
+#   message_text = ' /workspace bind my-project'                        # for relative paths
+#   message_text = ' /workspace route /home/user/Project/Source/Bytedance'  # for absolute paths (default)
+import subprocess
+username = subprocess.check_output(['whoami']).decode().strip()
+# Default absolute path when user didn't specify a project:
+default_path = f'/home/{username}/Project/Source/Bytedance'
+message_text = f' /workspace route {default_path}'
 
 content = json.dumps({
     'zh_cn': {
