@@ -22,6 +22,8 @@ Manage tasks via Feishu group chat + Bitable, with hourly progress tracking.
 
 If the user does not specify a project directory, the default is `/home/{user}/Project/Source/Bytedance` (get `{user}` via `whoami`). This is passed as an absolute path, so the workspace command will be `/workspace route /home/{user}/Project/Source/Bytedance`.
 
+**NOTE:** The current bot cannot set its own workspace by @mentioning itself — self-@ is stripped by cc-connect. The create-workspace-group skill handles this by using another team bot's token to send the @mention to the current bot.
+
 After group creation, you have the `chat_id` for Bitable and cron setup.
 
 ### 2. Read Bitable Schema First
@@ -85,8 +87,6 @@ content = json.dumps({
 **If the task has a Related Documents field in Bitable, always send those links to the group with @team-leader.**
 
 ### 5. Set Up Hourly Progress Tracking
-
-**Before creating a cron, always check if one already exists:**
 
 **Before creating a cron, always check if one already exists:**
 
@@ -191,6 +191,7 @@ bytedcli --json feishu bitable record update \
 | Not filtering for unfinished tasks | Only ask progress for Status != Finished |
 | Using team-leader token to send progress messages | Use **boss bot** token — team-leader @itself won't trigger notification and message won't be visible |
 | Not sharing related documents in group chat | After creating Bitable records, always send document links + summary to the group so team members know what to build |
+| Self-@mention for workspace command | cc-connect strips self-@. Use another team bot's token to @ the current bot with `/workspace route` |
 
 ## Field Reference
 
