@@ -886,6 +886,18 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 	toolName, _ := request["tool_name"].(string)
 	input, _ := request["input"].(map[string]any)
 
+	// Block commands that would kill the parent cc-connect daemon process.
+	if toolName == "Bash" {
+		if cmd, _ := input["command"].(string); cmd != "" && isDaemonSelfDestructCommand(cmd) {
+			slog.Warn("claudeSession: blocked daemon self-destruct command", "request_id", requestID, "tool", toolName)
+			_ = cs.RespondPermission(requestID, core.PermissionResult{
+				Behavior: "deny",
+				Message:  "Blocked: this command would kill the cc-connect daemon. Use `cc-connect daemon restart` from a separate terminal instead.",
+			})
+			return
+		}
+	}
+
 	if cs.autoApprove.Load() {
 		slog.Debug("claudeSession: auto-approving", "request_id", requestID, "tool", toolName)
 		_ = cs.RespondPermission(requestID, core.PermissionResult{
@@ -952,6 +964,33 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 	case <-cs.ctx.Done():
 		return
 	}
+}
+
+// isDaemonSelfDestructCommand checks whether a Bash command would kill the
+// cc-connect daemon process. This prevents an agent from accidentally
+// destroying its own parent (which also kills all other projects' sessions).
+func isDaemonSelfDestructCommand(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	daemonKillPatterns := []string{
+		"cc-connect daemon restart",
+		"cc-connect daemon stop",
+		"cc-connect daemon reload",
+	}
+	for _, p := range daemonKillPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	if daemonPID := os.Getenv("CC_CONNECT_DAEMON_PID"); daemonPID != "" {
+		if strings.Contains(lower, "kill "+daemonPID) {
+			return true
+		}
+	}
+	if strings.Contains(lower, "systemctl") && strings.Contains(lower, "cc-connect") &&
+		(strings.Contains(lower, "restart") || strings.Contains(lower, "stop")) {
+		return true
+	}
+	return false
 }
 
 // Send writes a user message (with optional images and files) to the Claude process stdin.

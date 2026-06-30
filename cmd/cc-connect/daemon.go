@@ -244,7 +244,17 @@ func daemonStart() {
 	fmt.Println("cc-connect daemon started.")
 }
 
+// checkNotInsideAgent prevents daemon stop/restart from being invoked by an
+// agent subprocess (which would kill its own parent and all other sessions).
+func checkNotInsideAgent(action string) {
+	if os.Getenv("CC_CONNECT_DAEMON_PID") != "" {
+		fmt.Fprintf(os.Stderr, "Error: cannot %s daemon from inside an agent session. Run this command from a separate terminal instead.\n", action)
+		os.Exit(1)
+	}
+}
+
 func daemonStop() {
+	checkNotInsideAgent("stop")
 	mgr := mustManager()
 	requireInstalled(mgr)
 	if err := mgr.Stop(); err != nil {
@@ -255,6 +265,7 @@ func daemonStop() {
 }
 
 func daemonRestart(args []string) {
+	checkNotInsideAgent("restart")
 	force := false
 	for _, a := range args {
 		if a == "--force" {

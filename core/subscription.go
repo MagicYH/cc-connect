@@ -379,6 +379,13 @@ func (s *SubscriptionStore) MarkRun(id string, lastErr string, isPermanent bool)
 	return ErrSubscriptionNotFound
 }
 
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // filterMessages applies compiled filter/exclude regex to scanned messages,
 // excluding already-processed message IDs, non-bot messages, and self-bot messages.
 func filterMessages(msgs []ScannedMessage, filterRe, excludeRe *regexp.Regexp, processedIDs []string, botID string) ([]ScannedMessage, error) {
@@ -392,11 +399,9 @@ func filterMessages(msgs []ScannedMessage, filterRe, excludeRe *regexp.Regexp, p
 		if _, seen := processedSet[msg.MessageID]; seen {
 			continue
 		}
-		// Only keep bot messages — subscriptions handle bot alerts
 		if !msg.IsBot {
 			continue
 		}
-		// Exclude self-bot messages
 		if botID != "" && msg.UserID == botID {
 			continue
 		}
@@ -404,8 +409,15 @@ func filterMessages(msgs []ScannedMessage, filterRe, excludeRe *regexp.Regexp, p
 			continue
 		}
 		if excludeRe != nil && excludeRe.MatchString(msg.Content) {
+			slog.Debug("subscription: excluding message",
+				"msg_id", msg.MessageID,
+				"exclude_pattern", excludeRe.String(),
+				"content_preview", truncateString(msg.Content, 200))
 			continue
 		}
+		slog.Debug("subscription: message passed filters",
+			"msg_id", msg.MessageID,
+			"content_preview", truncateString(msg.Content, 200))
 		matched = append(matched, msg)
 	}
 	return matched, nil
