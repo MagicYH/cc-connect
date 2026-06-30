@@ -4317,50 +4317,80 @@ var messages = map[MsgKey]map[Language]string{
 	},
 	MsgSubHelp: {
 		LangEnglish: "Subscription Commands:\n" +
-			"/subscribe <filter> <exclude> [prompt...] - Create subscription\n" +
+			"/subscribe <filter> [exclude] [prompt] - Create subscription\n" +
 			"/subscribe list - List subscriptions for this group\n" +
 			"/subscribe list all - List all subscriptions\n" +
 			"/subscribe show <id> - Show subscription details\n" +
 			"/subscribe enable <id> - Enable subscription\n" +
 			"/subscribe disable <id> - Disable subscription\n" +
 			"/subscribe del <id> - Delete subscription\n\n" +
-			"Tip: Use {{content}} in prompt to reference the matched message. Use \"-\" for filter/exclude to match all messages.",
+			"Options: -e/--exclude <regex>  -p/--prompt <text>  -i/--interval <cron>\n\n" +
+			"Examples:\n" +
+			"  /subscribe warning\n" +
+			"  /subscribe warning Recovered\n" +
+			"  /subscribe \"alert|warning\" -e \"(?i)recovered\"\n" +
+			"  /subscribe warning -e Recovered -p \"Analyze: {{content}}\"\n\n" +
+			"Filter/exclude are regex. Use (?i) for case-insensitive. \"-\" matches all.",
 		LangChinese: "订阅命令：\n" +
-			"/subscribe <过滤词> <排除词> [提示词...] - 创建订阅\n" +
+			"/subscribe <过滤词> [排除词] [提示词] - 创建订阅\n" +
 			"/subscribe list - 查看本群订阅\n" +
 			"/subscribe list all - 查看所有订阅\n" +
 			"/subscribe show <id> - 查看订阅详情\n" +
 			"/subscribe enable <id> - 启用订阅\n" +
 			"/subscribe disable <id> - 禁用订阅\n" +
 			"/subscribe del <id> - 删除订阅\n\n" +
-			"提示：在提示词中使用 {{content}} 引用匹配的消息。过滤词/排除词用 \"-\" 表示匹配所有。",
+			"选项: -e/--exclude <正则>  -p/--prompt <文本>  -i/--interval <cron>\n\n" +
+			"示例：\n" +
+			"  /subscribe warning\n" +
+			"  /subscribe warning Recovered\n" +
+			"  /subscribe \"alert|warning\" -e \"(?i)recovered\"\n" +
+			"  /subscribe warning -e Recovered -p \"分析: {{content}}\"\n\n" +
+			"过滤词/排除词为正则表达式，(?i) 表示不区分大小写，\"-\" 表示匹配所有。",
 		LangTraditionalChinese: "訂閱命令：\n" +
-			"/subscribe <過濾詞> <排除詞> [提示詞...] - 建立訂閱\n" +
+			"/subscribe <過濾詞> [排除詞] [提示詞] - 建立訂閱\n" +
 			"/subscribe list - 查看本群訂閱\n" +
 			"/subscribe list all - 查看所有訂閱\n" +
 			"/subscribe show <id> - 查看訂閱詳情\n" +
 			"/subscribe enable <id> - 啟用訂閱\n" +
 			"/subscribe disable <id> - 停用訂閱\n" +
 			"/subscribe del <id> - 刪除訂閱\n\n" +
-			"提示：在提示詞中使用 {{content}} 引用匹配的訊息。過濾詞/排除詞用 \"-\" 表示匹配所有。",
+			"選項: -e/--exclude <正規表示式>  -p/--prompt <文本>  -i/--interval <cron>\n\n" +
+			"示例：\n" +
+			"  /subscribe warning\n" +
+			"  /subscribe warning Recovered\n" +
+			"  /subscribe \"alert|warning\" -e \"(?i)recovered\"\n" +
+			"  /subscribe warning -e Recovered -p \"分析: {{content}}\"\n\n" +
+			"過濾詞/排除詞為正規表示式，(?i) 表示不區分大小寫，\"-\" 表示匹配所有。",
 		LangJapanese: "サブスクリプションコマンド:\n" +
-			"/subscribe <フィルター> <除外> [プロンプト...] - 作成\n" +
+			"/subscribe <フィルター> [除外] [プロンプト] - 作成\n" +
 			"/subscribe list - このグループのサブスクリプション\n" +
 			"/subscribe list all - すべてのサブスクリプション\n" +
 			"/subscribe show <id> - 詳細表示\n" +
 			"/subscribe enable <id> - 有効化\n" +
 			"/subscribe disable <id> - 無効化\n" +
 			"/subscribe del <id> - 削除\n\n" +
-			"ヒント: プロンプトで {{content}} を使って一致したメッセージを参照できます。フィルター/除外に \"-\" を指定すると全メッセージに一致します。",
+			"オプション: -e/--exclude <正規表現>  -p/--prompt <テキスト>  -i/--interval <cron>\n\n" +
+			"例:\n" +
+			"  /subscribe warning\n" +
+			"  /subscribe warning Recovered\n" +
+			"  /subscribe \"alert|warning\" -e \"(?i)recovered\"\n" +
+			"  /subscribe warning -e Recovered -p \"分析: {{content}}\"\n\n" +
+			"フィルター/除外は正規表現です。(?i) で大文字小文字を区別しません。\"-\" ですべてに一致。",
 		LangSpanish: "Comandos de suscripción:\n" +
-			"/subscribe <filtro> <excluir> [prompt...] - Crear\n" +
+			"/subscribe <filtro> [excluir] [prompt] - Crear\n" +
 			"/subscribe list - Ver suscripciones del grupo\n" +
 			"/subscribe list all - Ver todas\n" +
 			"/subscribe show <id> - Ver detalles\n" +
 			"/subscribe enable <id> - Habilitar\n" +
 			"/subscribe disable <id> - Deshabilitar\n" +
 			"/subscribe del <id> - Eliminar\n\n" +
-			"Consejo: Usa {{content}} en el prompt para referenciar el mensaje. Usa \"-\" para filtro/excluir y coincidir con todo.",
+			"Opciones: -e/--exclude <regex>  -p/--prompt <texto>  -i/--interval <cron>\n\n" +
+			"Ejemplos:\n" +
+			"  /subscribe warning\n" +
+			"  /subscribe warning Recovered\n" +
+			"  /subscribe \"alert|warning\" -e \"(?i)recovered\"\n" +
+			"  /subscribe warning -e Recovered -p \"Analizar: {{content}}\"\n\n" +
+			"Filtro/excluir son regex. Usa (?i) para insensible a mayúsculas. \"-\" coincide con todo.",
 	},
 	MsgSubAdminRequired: {
 		LangEnglish:            "Only admins can manage subscriptions.",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -16,6 +17,13 @@ import (
 
 // ListMessages retrieves message history from a Feishu chat using the
 // Im.Message.List API. It implements core.MessageScanner.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func (p *Platform) ListMessages(ctx context.Context, chatID string, opts core.ListMessagesOptions) ([]core.ScannedMessage, string, error) {
 	pageSize := opts.PageSize
 	if pageSize <= 0 {
@@ -87,6 +95,7 @@ func (p *Platform) ListMessages(ctx context.Context, chatID string, opts core.Li
 		if item.Body != nil && item.Body.Content != nil {
 			content := *item.Body.Content
 			if sm.IsCard {
+				slog.Debug("subscription: raw card JSON", "msg_id", sm.MessageID, "card_json", truncateString(content, 2000))
 				sm.Content = extractInteractiveCardText(content)
 			} else {
 				sm.Content = extractPlainText(sm.MsgType, content)

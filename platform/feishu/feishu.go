@@ -2209,15 +2209,34 @@ func extractInteractiveCardText(content string) string {
 
 	var parts []string
 
-	// Extract header title (works for both Schema 2.0 and legacy cards).
+	// Extract header text (title, subtitle, tag_list — works for both Schema 2.0 and legacy cards).
 	if raw, ok := card["header"]; ok {
 		var header struct {
 			Title struct {
 				Content string `json:"content"`
 			} `json:"title"`
+			Subtitle struct {
+				Content string `json:"content"`
+			} `json:"subtitle"`
+			TagList []struct {
+				Tag  string `json:"tag"`
+				Text struct {
+					Content string `json:"content"`
+				} `json:"text"`
+			} `json:"tag_list"`
 		}
-		if json.Unmarshal(raw, &header) == nil && header.Title.Content != "" {
-			parts = append(parts, header.Title.Content)
+		if json.Unmarshal(raw, &header) == nil {
+			if header.Title.Content != "" {
+				parts = append(parts, header.Title.Content)
+			}
+			if header.Subtitle.Content != "" {
+				parts = append(parts, header.Subtitle.Content)
+			}
+			for _, t := range header.TagList {
+				if t.Text.Content != "" {
+					parts = append(parts, t.Text.Content)
+				}
+			}
 		}
 	}
 
@@ -2292,6 +2311,10 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 			Tag      string            `json:"tag"`
 			Content  string            `json:"content"`
 			Elements []json.RawMessage `json:"elements"`
+			Columns  json.RawMessage   `json:"columns"`
+			Header   json.RawMessage   `json:"header"`
+			Text     json.RawMessage   `json:"text"`
+			URL      string            `json:"url"`
 			Property struct {
 				Content   string            `json:"content"`
 				Contents  json.RawMessage   `json:"contents"`
@@ -2325,8 +2348,14 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 					label = textElem.Property.Content
 				}
 			}
+			if label == "" && len(elem.Text) > 0 {
+				label = strings.Join(extractTextValue(elem.Text), "")
+			}
 			var openURL string
-			if len(elem.Property.Behaviors) > 0 {
+			if elem.URL != "" {
+				openURL = elem.URL
+			}
+			if openURL == "" && len(elem.Property.Behaviors) > 0 {
 				var behaviors []struct {
 					Type string `json:"type"`
 					URL  string `json:"url"`
@@ -2384,7 +2413,11 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 			var columns []struct {
 				Elements []json.RawMessage `json:"elements"`
 			}
-			if json.Unmarshal(elem.Property.Columns, &columns) == nil {
+			colData := elem.Property.Columns
+			if len(colData) == 0 {
+				colData = elem.Columns
+			}
+			if json.Unmarshal(colData, &columns) == nil {
 				for _, col := range columns {
 					extractCardElements(col.Elements, parts, d+1)
 				}
@@ -2416,16 +2449,24 @@ func extractCardElements(elements []json.RawMessage, parts *[]string, depth ...i
 			continue
 		case "collapsible_panel":
 			// Extract header title first (before children).
-			if len(elem.Property.Header) > 0 {
+			headerData := elem.Property.Header
+			if len(headerData) == 0 {
+				headerData = elem.Header
+			}
+			if len(headerData) > 0 {
 				var header struct {
 					Title json.RawMessage `json:"title"`
 				}
-				if json.Unmarshal(elem.Property.Header, &header) == nil && len(header.Title) > 0 {
+				if json.Unmarshal(headerData, &header) == nil && len(header.Title) > 0 {
 					*parts = append(*parts, extractTextValue(header.Title)...)
 				}
 			}
-			if len(elem.Property.Elements) > 0 {
-				extractCardElements(elem.Property.Elements, parts, d+1)
+			panelElements := elem.Property.Elements
+			if len(panelElements) == 0 {
+				panelElements = elem.Elements
+			}
+			if len(panelElements) > 0 {
+				extractCardElements(panelElements, parts, d+1)
 			}
 			continue
 		default:

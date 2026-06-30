@@ -11,7 +11,10 @@
       "Bash(git fetch *)",
       "Read(//data00/home/chenhao.magic/**)",
       "Bash(go build *)",
-      "Bash(cc-connect daemon *)"
+      "Bash(cc-connect daemon *)",
+      "Bash(python3 *)",
+      "Read(//home/chenhao.magic/.cc-connect/**)",
+      "Read(//home/chenhao.magic/.cc-connect/data/**)"
     ]
   }
 }

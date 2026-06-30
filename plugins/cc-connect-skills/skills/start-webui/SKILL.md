@@ -1,6 +1,6 @@
 ---
 name: start-webui
-description: Use when starting or deploying the cc-connect Web UI in production mode, accessing the management dashboard, or troubleshooting Web UI availability
+description: Use when starting the cc-connect Web UI, checking if the management dashboard is accessible, rebuilding after frontend changes, or troubleshooting Web UI not loading
 ---
 
 # Start WebUI in Production Mode

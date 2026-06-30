@@ -49,12 +49,13 @@ func (e *Engine) cmdSubscribeAdd(p Platform, msg *Message, args []string) {
 		return
 	}
 
-	// Parse flags: first non-flag arg is the filter
+	// Parse flags: first non-flag arg is filter, second is exclude_filter
 	var (
 		filter        string
 		excludeFilter string
 		prompt        string
 		interval      string
+		posIndex      int
 	)
 
 	i := 0
@@ -76,9 +77,15 @@ func (e *Engine) cmdSubscribeAdd(p Platform, msg *Message, args []string) {
 				interval = args[i]
 			}
 		default:
-			if filter == "" {
+			switch posIndex {
+			case 0:
 				filter = args[i]
+			case 1:
+				excludeFilter = args[i]
+			case 2:
+				prompt = args[i]
 			}
+			posIndex++
 		}
 		i++
 	}
