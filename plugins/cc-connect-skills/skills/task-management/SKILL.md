@@ -100,7 +100,7 @@ Look for a job with a description matching "Task progress check" or similar. If 
 
 ```bash
 cc-connect cron add --cron "7 * * * *" \
-  --prompt "Execute the task-management progress tracking routine: 1) Read the Bitable main task table (app-token: <APP_TOKEN>, table-id: <MAIN_TABLE_ID>) and filter for records where Status is NOT Finished (i.e. Queue, Running, or Pause). 2) For each unfinished task, find its Task Group (chat_id), then in that group chat send a Feishu post (rich text) message with @team-leader asking for progress. MUST use post format with at tag — plain text @mention does NOT work for bots. 3) After receiving a response from team-leader, update the Bitable record's Status and Update Time fields accordingly. Bitable subtask table for subtask updates: <SUBTASK_TABLE_ID>." \
+  --prompt "1) Read the Bitable main task table (app-token: <APP_TOKEN>, table-id: <MAIN_TABLE_ID>) and filter for records where Status is NOT Finished (Queue, Running, or Pause). 2) For each unfinished task, find its Task Group (chat_id), then send a Feishu post (rich text) message with @team-leader asking for progress. MUST use post format with at tag — plain text @mention does NOT work for bots. Tell team-leader in the message: 'This message is from Boss. You MUST @Boss in your reply — Boss is a bot and cannot receive messages without @mention.' Include task name and current Bitable status, and ask team-leader to reply in format: a) task xxx progress yyy, update status to Running; b) task xxx completed, update status to Finished. 3) After receiving a response from team-leader, update the Bitable record's Status and Update Time fields. Subtask table for subtask updates: <SUBTASK_TABLE_ID>." \
   --desc "Task progress check"
 ```
 
@@ -108,6 +108,7 @@ cc-connect cron add --cron "7 * * * *" \
 - Bitable app-token and both table IDs (main + subtask)
 - The instruction to read Bitable and filter for unfinished tasks
 - The requirement to use post format with `at` tag for @mention
+- The instruction to tell team-leader the message is from Boss and must @Boss in reply (Boss is a bot, cannot receive messages without @mention)
 - The instruction to update Status and Update Time after receiving replies
 
 **The cron prompt must NOT include**:
