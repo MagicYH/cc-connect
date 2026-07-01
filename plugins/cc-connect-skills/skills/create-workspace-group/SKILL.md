@@ -144,16 +144,20 @@ What did the user specify?
 | `bind` | `/workspace bind <name>` | Relative path — resolves to `base_dir/<name>` |
 | `route` | `/workspace route <path>` | Absolute path starting with `/` — binds directly |
 
-Get a tenant access token and send the @mention message:
+**IMPORTANT — Use team-leader's token to send ALL workspace commands.** This ensures consistency and avoids the self-@mention problem: team-leader sends @mention to every bot (including the current one) with the `/workspace` command. Since cc-connect strips self-@mention, the current bot cannot @itself — but team-leader CAN @ the current bot on its behalf.
+
+Get team-leader's tenant access token:
 
 ```bash
-TOKEN=$(python3 -c "
+TEAM_LEADER_TOKEN=$(python3 -c "
 import tomllib, os, json, urllib.request
+
 config_path = os.environ.get('CC_DATA_DIR', os.path.expanduser('~/.cc-connect')) + '/config.toml'
 with open(config_path, 'rb') as f:
     cfg = tomllib.load(f)
+
 for p in cfg.get('projects', []):
-    if p.get('name') == 'CURRENT_PROJECT':
+    if p.get('name') == 'team-leader':
         for plat in p.get('platforms', []):
             if plat.get('type') == 'feishu':
                 req = urllib.request.Request(
@@ -161,28 +165,26 @@ for p in cfg.get('projects', []):
                     data=json.dumps({'app_id': plat['options']['app_id'], 'app_secret': plat['options']['app_secret']}).encode(),
                     headers={'Content-Type': 'application/json'}
                 )
-                with urllib.request.urlopen(req) as resp:
+                with urllib.request.urlopen(req, timeout=10) as resp:
                     print(json.loads(resp.read())['tenant_access_token'])
+                exit()
+print('ERROR: team-leader project not found in config')
 ")
+```
 
-# Send rich text @mention with workspace command
+Send one @mention message per bot using team-leader's token:
+
+```bash
 python3 -c "
 import json, urllib.request
 
-token = '$TOKEN'
+token = '$TEAM_LEADER_TOKEN'
 chat_id = '$CHAT_ID'
 bot_open_id = 'BOT_OPEN_ID'
 
 # Choose the right command based on what the user specified:
 #   message_text = ' /workspace bind ws-dev-skills'                           # for relative names
 #   message_text = ' /workspace route /home/user/Project/Source/Bytedance'     # for absolute paths / default
-import subprocess
-username = subprocess.check_output(['whoami']).decode().strip()
-
-# IMPORTANT: Use the workspace the user specified!
-# If user said 'ws-dev-skills' → message_text = ' /workspace bind ws-dev-skills'
-# If user said nothing → default_path = f'/home/{username}/Project/Source/Bytedance'
-#                        message_text = f' /workspace route {default_path}'
 workspace_name = 'USER_SPECIFIED_WORKSPACE'  # Replace with user's input
 message_text = f' /workspace bind {workspace_name}'
 
@@ -212,80 +214,7 @@ with urllib.request.urlopen(req) as resp:
 "
 ```
 
-Send one message per bot (each bot needs its own @mention).
-
-**IMPORTANT — Self-@mention is stripped by cc-connect.** The current bot (the one executing this skill) CANNOT set its own workspace by @mentioning itself — the @ tag will be removed before delivery. To set the current bot's workspace, use **another team bot's token** to send the @mention message instead:
-
-```bash
-# Get ANY other team bot's tenant token (pick the first one that isn't the current project)
-OTHER_TOKEN=$(python3 -c "
-import tomllib, os, json, urllib.request
-
-config_path = os.environ.get('CC_DATA_DIR', os.path.expanduser('~/.cc-connect')) + '/config.toml'
-with open(config_path, 'rb') as f:
-    cfg = tomllib.load(f)
-
-current = os.environ.get('CC_PROJECT', '')
-
-for p in cfg.get('projects', []):
-    name = p.get('name', '')
-    if name == current:
-        continue
-    for plat in p.get('platforms', []):
-        if plat.get('type') == 'feishu':
-            req = urllib.request.Request(
-                'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
-                data=json.dumps({'app_id': plat['options']['app_id'], 'app_secret': plat['options']['app_secret']}).encode(),
-                headers={'Content-Type': 'application/json'}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                print(json.loads(resp.read())['tenant_access_token'])
-            exit()
-")
-
-# Send @mention to the CURRENT bot from another bot's token
-python3 -c "
-import json, urllib.request, subprocess
-
-token = '$OTHER_TOKEN'
-chat_id = '$CHAT_ID'
-current_bot_open_id = 'CURRENT_BOT_OPEN_ID'
-
-# Use the same workspace command as for other bots
-# If user specified a relative name like 'ws-dev-skills':
-workspace_name = 'USER_SPECIFIED_WORKSPACE'  # Replace with user's input
-message_text = f' /workspace bind {workspace_name}'
-# If user specified nothing, use default absolute path:
-# username = subprocess.check_output(['whoami']).decode().strip()
-# message_text = f' /workspace route /home/{username}/Project/Source/Bytedance'
-
-content = json.dumps({
-    'zh_cn': {
-        'title': '',
-        'content': [[
-            {'tag': 'at', 'user_id': current_bot_open_id},
-            {'tag': 'text', 'text': message_text}
-        ]]
-    }
-})
-
-body = json.dumps({
-    'receive_id': chat_id,
-    'msg_type': 'post',
-    'content': content
-})
-
-req = urllib.request.Request(
-    'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id',
-    data=body.encode(),
-    headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-)
-with urllib.request.urlopen(req) as resp:
-    print(json.loads(resp.read()).get('code', 'error'))
-"
-```
-
-The `CURRENT_BOT_OPEN_ID` is the open_id of the current project's bot (obtained in step 4).
+Repeat for each bot's `open_id` (including the current bot). Since team-leader sends all messages, there is no self-@mention issue — team-leader can @any bot including the current one.
 
 ### 6. Report results
 
@@ -307,7 +236,7 @@ After execution, report:
 | Using `open_id` field in `at` tag | Feishu requires `user_id` field (not `open_id`) in the `at` tag, even though the value is an open_id |
 | Wrong lark-cli profile active | Check `lark-cli profile list`, switch with `lark-cli profile use NAME` |
 | Forgetting `--set-bot-manager` on creation | Without this, bot can't manage the group it created |
-| Self-@mention for workspace command | cc-connect strips self-@. Use **another team bot's token** to @ the current bot with the `/workspace` command |
+| Self-@mention for workspace command | cc-connect strips self-@. Use **team-leader's token** to @ ALL bots (including current) with `/workspace` commands |
 
 ## Error Handling
 
