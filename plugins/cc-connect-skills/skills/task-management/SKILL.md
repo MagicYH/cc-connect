@@ -22,7 +22,7 @@ Manage tasks via Feishu group chat + Bitable, with hourly progress tracking.
 
 **IMPORTANT — Workspace must match the user's request.** The user will specify which workspace to use (e.g. "ws-dev-skills", "cc-connect"). Pass this to the create-workspace-group skill as the project directory. If the user gives a short name like "ws-dev-skills", treat it as a **relative path** → use `/workspace bind ws-dev-skills`. If the user gives an absolute path, use `/workspace route`. If the user does NOT specify a workspace, only then default to `/home/{user}/Project/Source/Bytedance` (absolute path → `/workspace route`).
 
-**NOTE:** The current bot cannot set its own workspace by @mentioning itself — self-@ is stripped by cc-connect. The create-workspace-group skill handles this by using **team-leader's token** to send the @mention to all bots (including the current one).
+**NOTE:** The current bot (boss) cannot set its own workspace by @mentioning itself — self-@ is stripped by cc-connect. The create-workspace-group skill handles this by using boss's token for teammate @mentions, and **team-leader's token** to send the @boss workspace command.
 
 After group creation, you have the `chat_id` for Bitable and cron setup.
 
@@ -191,7 +191,7 @@ bytedcli --json feishu bitable record update \
 | Not filtering for unfinished tasks | Only ask progress for Status != Finished |
 | Using team-leader token to send progress messages | Use **boss bot** token — team-leader @itself won't trigger notification and message won't be visible |
 | Not sharing related documents in group chat | After creating Bitable records, always send document links + summary to the group so team members know what to build |
-| Self-@mention for workspace command | cc-connect strips self-@. Use **team-leader's token** to @ ALL bots (including current) with `/workspace` commands |
+| Self-@mention for workspace command | cc-connect strips self-@. Boss uses its own token for teammates; **team-leader** sends the @boss workspace command |
 
 ## Field Reference
 

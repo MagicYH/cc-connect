@@ -144,7 +144,36 @@ What did the user specify?
 | `bind` | `/workspace bind <name>` | Relative path — resolves to `base_dir/<name>` |
 | `route` | `/workspace route <path>` | Absolute path starting with `/` — binds directly |
 
-**IMPORTANT — Use team-leader's token to send ALL workspace commands.** This ensures consistency and avoids the self-@mention problem: team-leader sends @mention to every bot (including the current one) with the `/workspace` command. Since cc-connect strips self-@mention, the current bot cannot @itself — but team-leader CAN @ the current bot on its behalf.
+**IMPORTANT — Two tokens, two roles:**
+
+1. **Boss bot token** — sends @mention to all teammate bots (NOT boss itself) with `/workspace` commands
+2. **Team-leader token** — sends @mention to boss bot only with `/workspace` command (because boss cannot @itself — cc-connect strips self-@mention)
+
+Get boss bot's tenant access token:
+
+```bash
+BOSS_TOKEN=$(python3 -c "
+import tomllib, os, json, urllib.request
+
+config_path = os.environ.get('CC_DATA_DIR', os.path.expanduser('~/.cc-connect')) + '/config.toml'
+with open(config_path, 'rb') as f:
+    cfg = tomllib.load(f)
+
+for p in cfg.get('projects', []):
+    if p.get('name') == 'boss':
+        for plat in p.get('platforms', []):
+            if plat.get('type') == 'feishu':
+                req = urllib.request.Request(
+                    'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+                    data=json.dumps({'app_id': plat['options']['app_id'], 'app_secret': plat['options']['app_secret']}).encode(),
+                    headers={'Content-Type': 'application/json'}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    print(json.loads(resp.read())['tenant_access_token'])
+                exit()
+print('ERROR: boss project not found in config')
+")
+```
 
 Get team-leader's tenant access token:
 
@@ -172,20 +201,19 @@ print('ERROR: team-leader project not found in config')
 ")
 ```
 
-Send one @mention message per bot using team-leader's token:
+#### 5a. Boss sends workspace commands to all teammates
+
+Using boss bot's token, send @mention to each teammate bot (NOT boss itself):
 
 ```bash
 python3 -c "
 import json, urllib.request
 
-token = '$TEAM_LEADER_TOKEN'
+token = '$BOSS_TOKEN'
 chat_id = '$CHAT_ID'
-bot_open_id = 'BOT_OPEN_ID'
+bot_open_id = 'TEAMMATE_BOT_OPEN_ID'  # each teammate in turn, skip boss
 
-# Choose the right command based on what the user specified:
-#   message_text = ' /workspace bind ws-dev-skills'                           # for relative names
-#   message_text = ' /workspace route /home/user/Project/Source/Bytedance'     # for absolute paths / default
-workspace_name = 'USER_SPECIFIED_WORKSPACE'  # Replace with user's input
+workspace_name = 'USER_SPECIFIED_WORKSPACE'
 message_text = f' /workspace bind {workspace_name}'
 
 content = json.dumps({
@@ -214,7 +242,46 @@ with urllib.request.urlopen(req) as resp:
 "
 ```
 
-Repeat for each bot's `open_id` (including the current bot). Since team-leader sends all messages, there is no self-@mention issue — team-leader can @any bot including the current one.
+#### 5b. Team-leader sends workspace command to boss
+
+Boss cannot @itself (cc-connect strips self-@mention), so team-leader sends the @mention to boss:
+
+```bash
+python3 -c "
+import json, urllib.request
+
+token = '$TEAM_LEADER_TOKEN'
+chat_id = '$CHAT_ID'
+boss_open_id = 'BOSS_OPEN_ID'  # boss bot's open_id
+
+workspace_name = 'USER_SPECIFIED_WORKSPACE'
+message_text = f' /workspace bind {workspace_name}'
+
+content = json.dumps({
+    'zh_cn': {
+        'title': '',
+        'content': [[
+            {'tag': 'at', 'user_id': boss_open_id},
+            {'tag': 'text', 'text': message_text}
+        ]]
+    }
+})
+
+body = json.dumps({
+    'receive_id': chat_id,
+    'msg_type': 'post',
+    'content': content
+})
+
+req = urllib.request.Request(
+    'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id',
+    data=body.encode(),
+    headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+)
+with urllib.request.urlopen(req) as resp:
+    print(json.loads(resp.read()).get('code', 'error'))
+"
+```
 
 ### 6. Report results
 
@@ -236,7 +303,7 @@ After execution, report:
 | Using `open_id` field in `at` tag | Feishu requires `user_id` field (not `open_id`) in the `at` tag, even though the value is an open_id |
 | Wrong lark-cli profile active | Check `lark-cli profile list`, switch with `lark-cli profile use NAME` |
 | Forgetting `--set-bot-manager` on creation | Without this, bot can't manage the group it created |
-| Self-@mention for workspace command | cc-connect strips self-@. Use **team-leader's token** to @ ALL bots (including current) with `/workspace` commands |
+| Self-@mention for workspace command | cc-connect strips self-@. Boss uses its own token for teammates; **team-leader** sends the @boss workspace command |
 
 ## Error Handling
 
