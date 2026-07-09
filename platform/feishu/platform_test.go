@@ -1116,6 +1116,59 @@ func TestBuildRichCard_UsesCodexRuntimeToolDescriptors(t *testing.T) {
 	}
 }
 
+func TestBuildRichCard_RendersStreamingStatusFooterAsNotationBlocks(t *testing.T) {
+	cardJSON := buildRichCard(core.CardStatusWorking, "", nil, "answer", true, "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-stream-123")
+
+	var card map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		t.Fatalf("card JSON is invalid: %v", err)
+	}
+	body, ok := card["body"].(map[string]any)
+	if !ok {
+		t.Fatalf("body = %#v, want object", card["body"])
+	}
+	elements, ok := body["elements"].([]any)
+	if !ok {
+		t.Fatalf("body.elements = %#v, want array", body["elements"])
+	}
+
+	var hrIndex = -1
+	var footerLines []map[string]any
+	for i, element := range elements {
+		elem, ok := element.(map[string]any)
+		if !ok {
+			continue
+		}
+		if elem["tag"] == "hr" {
+			hrIndex = i
+			continue
+		}
+		if hrIndex >= 0 && elem["tag"] == "markdown" {
+			footerLines = append(footerLines, elem)
+		}
+	}
+	if hrIndex < 0 {
+		t.Fatalf("card JSON should contain hr before footer: %s", cardJSON)
+	}
+	if len(footerLines) != 2 {
+		t.Fatalf("footer line count = %d, want 2: %#v", len(footerLines), footerLines)
+	}
+
+	wants := []string{"model: claude-test-model", "cwd: /tmp/cc-connect-fixture · sess-stream-123"}
+	for i, want := range wants {
+		line := footerLines[i]
+		if line["content"] != want {
+			t.Fatalf("footer line %d content = %#v, want %q", i, line["content"], want)
+		}
+		if line["text_size"] != "notation" {
+			t.Fatalf("footer line %d text_size = %#v, want notation", i, line["text_size"])
+		}
+		if line["text_color"] != "grey" {
+			t.Fatalf("footer line %d text_color = %#v, want grey", i, line["text_color"])
+		}
+	}
+}
+
 func TestBuildRichCard_RendersThinkingAndToolResultRows(t *testing.T) {
 	code := 0
 	success := true
