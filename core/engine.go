@@ -6837,16 +6837,15 @@ func (e *Engine) buildReplyFooter(agent Agent, session AgentSession, workspaceDi
 //	line 2: model · out N · in N cw N cr N · ctx N%           (subject to e.showContextIndicator)
 //	line 3: <workdir>                                         (subject to e.showWorkdirIndicator)
 //
-// Returns "" when the master replyFooterEnabled toggle is off, or while the
-// turn is still streaming (footer represents finalized turn metadata —
-// token counts aren't yet settled and a live-updating elapsed line creates
-// visual noise during streaming. Header status badge already signals "Working").
+// Returns "" when the master replyFooterEnabled toggle is off. While streaming,
+// returns a lightweight initial footer with stable metadata only; finalized
+// elapsed/token/context details are reserved for the completion footer.
 func (e *Engine) composeRichStatusFooter(streaming bool, turnStart time.Time, agent Agent, session AgentSession, workspaceDir string) string {
 	if !e.replyFooterEnabled {
 		return ""
 	}
 	if streaming {
-		return ""
+		return e.composeInitialRichStatusFooter(agent, session, workspaceDir)
 	}
 	var lines []string
 
@@ -6881,6 +6880,21 @@ func (e *Engine) composeRichStatusFooter(streaming bool, turnStart time.Time, ag
 		}
 	}
 
+	return strings.Join(lines, "\n")
+}
+
+func (e *Engine) composeInitialRichStatusFooter(agent Agent, session AgentSession, workspaceDir string) string {
+	var lines []string
+	if e.showContextIndicator {
+		if model := strings.TrimSpace(replyFooterModel(session, agent)); model != "" {
+			lines = append(lines, "model: "+model)
+		}
+	}
+	if e.showWorkdirIndicator {
+		if dir := strings.TrimSpace(replyFooterWorkDir(session, agent, workspaceDir)); dir != "" {
+			lines = append(lines, "cwd: "+dir)
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

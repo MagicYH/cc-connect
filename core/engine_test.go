@@ -1569,6 +1569,152 @@ func TestReplyFooterWorkDir_AppendsSessionID(t *testing.T) {
 	}
 }
 
+func TestComposeRichStatusFooter_StreamingInitialMetadata(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		sessionID: "sess-stream-123",
+		alive:     true,
+		events:    make(chan Event, 1),
+		closed:    make(chan struct{}),
+		model:     "claude-test-model",
+	}
+
+	got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	want := "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-stream-123"
+	if got != want {
+		t.Fatalf("composeRichStatusFooter(streaming=true) = %q, want %q", got, want)
+	}
+}
+
+func TestComposeRichStatusFooter_StreamingRecomputesLateSessionID(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		alive:  true,
+		events: make(chan Event, 1),
+		closed: make(chan struct{}),
+		model:  "claude-test-model",
+	}
+
+	first := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	if strings.Contains(first, "session:") || strings.Contains(first, " · ") {
+		t.Fatalf("first streaming footer has malformed empty session: %q", first)
+	}
+	if first != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture" {
+		t.Fatalf("first streaming footer = %q", first)
+	}
+
+	session.sessionID = "sess-late-456"
+	second := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	if second != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-late-456" {
+		t.Fatalf("second streaming footer = %q", second)
+	}
+}
+
+func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
+	session := &controllableAgentSession{
+		sessionID: "sess-toggle-123",
+		alive:     true,
+		events:    make(chan Event, 1),
+		closed:    make(chan struct{}),
+		model:     "claude-test-model",
+	}
+
+	tests := []struct {
+		name       string
+		master     bool
+		showCtx    bool
+		showWork   bool
+		want       string
+		forbidden  []string
+	}{
+		{
+			name:      "master off suppresses all footer text",
+			master:    false,
+			showCtx:   true,
+			showWork:  true,
+			want:      "",
+		},
+		{
+			name:      "context off hides model only",
+			master:    true,
+			showCtx:   false,
+			showWork:  true,
+			want:      "cwd: /tmp/cc-connect-fixture · sess-toggle-123",
+			forbidden: []string{"claude-test-model", "model:"},
+		},
+		{
+			name:      "workdir off hides cwd and session only",
+			master:    true,
+			showCtx:   true,
+			showWork:  false,
+			want:      "model: claude-test-model",
+			forbidden: []string{"cwd:", "sess-toggle-123"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+			e.SetReplyFooterEnabled(tt.master)
+			e.SetShowContextIndicator(tt.showCtx)
+			e.SetShowWorkdirIndicator(tt.showWork)
+
+			got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+			if got != tt.want {
+				t.Fatalf("streaming footer = %q, want %q", got, tt.want)
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("streaming footer %q contains forbidden %q", got, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeRichStatusFooter_FinalBranchUnchanged(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		sessionID: "sess-final-789",
+		alive:     true,
+		events:    make(chan Event, 1),
+		closed:    make(chan struct{}),
+		model:     "claude-test-model",
+		contextUsage: &ContextUsage{
+			UsedTokens:               200,
+			InputTokens:              40,
+			CachedInputTokens:        60,
+			CacheCreationInputTokens: 20,
+			OutputTokens:             10,
+			ContextWindow:            1000,
+		},
+	}
+
+	got := e.composeRichStatusFooter(false, time.Now().Add(-2*time.Second), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	for _, want := range []string{"claude-test-model", "out 10", "in 40", "cw 20", "cr 60", "ctx 20%", "/tmp/cc-connect-fixture · sess-final-789"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("final footer %q missing %q", got, want)
+		}
+	}
+	for _, forbidden := range []string{"model:", "cwd:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("final footer %q contains initial label %q", got, forbidden)
+		}
+	}
+}
+
 func TestProcessInteractiveEvents_HiddenToolProgressKeepsPreviewOnFinalize(t *testing.T) {
 	p := &mockKeepPreviewPlatform{}
 	p.n = "feishu"
