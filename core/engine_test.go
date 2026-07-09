@@ -1569,6 +1569,167 @@ func TestReplyFooterWorkDir_AppendsSessionID(t *testing.T) {
 	}
 }
 
+func TestComposeRichStatusFooter_StreamingInitialMetadata(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		sessionID: "sess-stream-123",
+		alive:     true,
+		events:    make(chan Event, 1),
+		closed:    make(chan struct{}),
+		model:     "claude-test-model",
+	}
+
+	got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	want := "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-stream-123"
+	if got != want {
+		t.Fatalf("composeRichStatusFooter(streaming=true) = %q, want %q", got, want)
+	}
+}
+
+func TestComposeRichStatusFooter_StreamingRecomputesLateSessionID(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		alive:  true,
+		events: make(chan Event, 1),
+		closed: make(chan struct{}),
+		model:  "claude-test-model",
+	}
+
+	first := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	if first != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture" {
+		t.Fatalf("first streaming footer = %q", first)
+	}
+
+	session.sessionID = "sess-late-456"
+	second := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	if second != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-late-456" {
+		t.Fatalf("second streaming footer = %q", second)
+	}
+}
+
+func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
+	tests := []struct {
+		name      string
+		master    bool
+		showCtx   bool
+		showWork  bool
+		model     string
+		sessionID string
+		workspace string
+		want      string
+		forbidden []string
+	}{
+		{
+			name:      "master off suppresses all footer text",
+			master:    false,
+			showCtx:   true,
+			showWork:  true,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
+			want:      "",
+		},
+		{
+			name:      "context off hides model only",
+			master:    true,
+			showCtx:   false,
+			showWork:  true,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
+			want:      "cwd: /tmp/cc-connect-fixture · sess-toggle-123",
+			forbidden: []string{"claude-test-model", "model:"},
+		},
+		{
+			name:      "workdir off hides cwd and session only",
+			master:    true,
+			showCtx:   true,
+			showWork:  false,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
+			want:      "model: claude-test-model",
+			forbidden: []string{"cwd:", "sess-toggle-123"},
+		},
+		{
+			name:     "all metadata missing returns empty footer",
+			master:   true,
+			showCtx:  true,
+			showWork: true,
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+			e.SetReplyFooterEnabled(tt.master)
+			e.SetShowContextIndicator(tt.showCtx)
+			e.SetShowWorkdirIndicator(tt.showWork)
+
+			session := &controllableAgentSession{
+				sessionID: tt.sessionID,
+				alive:     true,
+				events:    make(chan Event, 1),
+				closed:    make(chan struct{}),
+				model:     tt.model,
+			}
+			got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, tt.workspace)
+			if got != tt.want {
+				t.Fatalf("streaming footer = %q, want %q", got, tt.want)
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("streaming footer %q contains forbidden %q", got, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeRichStatusFooter_FinalBranchUnchanged(t *testing.T) {
+	e := NewEngine("test", &stubAgent{}, nil, "", LangEnglish)
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	session := &controllableAgentSession{
+		sessionID: "sess-final-789",
+		alive:     true,
+		events:    make(chan Event, 1),
+		closed:    make(chan struct{}),
+		model:     "claude-test-model",
+		contextUsage: &ContextUsage{
+			UsedTokens:               200,
+			InputTokens:              40,
+			CachedInputTokens:        60,
+			CacheCreationInputTokens: 20,
+			OutputTokens:             10,
+			ContextWindow:            1000,
+		},
+	}
+
+	got := e.composeRichStatusFooter(false, time.Now().Add(-2*time.Second), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+	for _, want := range []string{"claude-test-model", "out 10", "in 40", "cw 20", "cr 60", "ctx 20%", "/tmp/cc-connect-fixture · sess-final-789"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("final footer %q missing %q", got, want)
+		}
+	}
+	for _, forbidden := range []string{"model:", "cwd:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("final footer %q contains initial label %q", got, forbidden)
+		}
+	}
+}
+
 func TestProcessInteractiveEvents_HiddenToolProgressKeepsPreviewOnFinalize(t *testing.T) {
 	p := &mockKeepPreviewPlatform{}
 	p.n = "feishu"
@@ -15414,13 +15575,15 @@ func (s *stubRichCardOnly) BuildRichCard(status CardStatus, title string, steps 
 // stubStreamingCardOnly implements Platform + StreamingRichCardSupporter (no RichCardSupporter).
 type stubStreamingCardOnly struct {
 	stubPlatformEngine
-	built     bool
-	slots     map[StreamingSlotID]SlotContent
-	finalized bool
+	built         bool
+	initialFooter string
+	slots         map[StreamingSlotID]SlotContent
+	finalized     bool
 }
 
-func (s *stubStreamingCardOnly) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+func (s *stubStreamingCardOnly) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string, initialFooter string) (any, error) {
 	s.built = true
+	s.initialFooter = initialFooter
 	s.slots = make(map[StreamingSlotID]SlotContent)
 	return "streaming-handle", nil
 }
@@ -15441,6 +15604,7 @@ type stubStreamingAndRichCard struct {
 	stubPlatformEngine
 	chatID        string
 	built         bool
+	initialFooter string
 	slots         map[StreamingSlotID]SlotContent
 	finalized     bool
 	finalizeErr   error
@@ -15451,8 +15615,9 @@ type stubStreamingAndRichCard struct {
 
 func (s *stubStreamingAndRichCard) ChatID() string { return s.chatID }
 
-func (s *stubStreamingAndRichCard) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+func (s *stubStreamingAndRichCard) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string, initialFooter string) (any, error) {
 	s.built = true
+	s.initialFooter = initialFooter
 	s.slots = make(map[StreamingSlotID]SlotContent)
 	return "streaming-handle", nil
 }
@@ -15550,6 +15715,51 @@ func TestExtractChatID(t *testing.T) {
 // TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard verifies that
 // when FinalizeStreamingCard fails, the engine falls back to the RichCardSupporter
 // path instead of leaving the card stuck in "Thinking/Working" state.
+func TestProcessInteractiveEvents_BuildStreamingCardReceivesInitialFooter(t *testing.T) {
+	p := &stubStreamingAndRichCard{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		chatID:             "oc_test",
+	}
+
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{
+		ThinkingMessages: true,
+		ThinkingMaxLen:   300,
+		ToolMaxLen:       500,
+		ToolMessages:     true,
+		Mode:             "full",
+		CardMode:         "rich",
+	})
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	sessionKey := "feishu:user-stream-initial-footer"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("sess-slot-123")
+	agentSession.model = "claude-test-model"
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     chatIDReplyCtx{chatID: "oc_test"},
+		workspaceDir: "/tmp/cc-connect-fixture",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "Hello world"}
+	agentSession.events <- Event{Type: EventResult, Content: "Hello world", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-initial-footer", time.Now(), nil, nil, state.replyCtx)
+
+	if !p.built {
+		t.Fatal("expected BuildStreamingCard to be called")
+	}
+	want := "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-slot-123"
+	if p.initialFooter != want {
+		t.Fatalf("initial footer = %q, want %q", p.initialFooter, want)
+	}
+}
+
 func TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard(t *testing.T) {
 	p := &stubStreamingAndRichCard{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},

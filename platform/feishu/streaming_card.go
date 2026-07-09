@@ -168,7 +168,7 @@ const (
 //
 // thinkingText controls whether the thinking collapsible_panel is included;
 // when non-empty the panel is present and expanded, when empty it is omitted.
-func buildStreamingCardSkeleton(status core.CardStatus, thinkingText string) string {
+func buildStreamingCardSkeleton(status core.CardStatus, thinkingText string, initialFooter string) string {
 	// Header template color and title follow status.
 	headerTemplate := "blue"
 	headerTitle := pickThinkingVerb()
@@ -247,11 +247,11 @@ func buildStreamingCardSkeleton(status core.CardStatus, thinkingText string) str
 		"content":    "",
 	})
 
-	// Footer note — initially empty, filled with status info at finalization.
+	// Footer note — starts with stable metadata, then finalization replaces it with final status info.
 	elements = append(elements, map[string]any{
 		"tag":        "markdown",
 		"element_id": streamingElementFooterNote,
-		"content":    "",
+		"content":    initialFooter,
 		"text_size":  "notation",
 		"text_color": "grey",
 	})
@@ -387,12 +387,12 @@ func (p *Platform) StreamSlotContent(ctx context.Context, previewHandle any, slo
 // BuildStreamingCard creates the initial multi-slot card skeleton, creates a
 // cardEntity for slot-level patching, sends the card as a new message, and
 // returns a handle.
-func (p *Platform) BuildStreamingCard(ctx context.Context, chatID string, status core.CardStatus, title string) (any, error) {
+func (p *Platform) BuildStreamingCard(ctx context.Context, chatID string, status core.CardStatus, title string, initialFooter string) (any, error) {
 	if !p.useInteractiveCard {
 		return nil, core.ErrSlotNotSupported
 	}
 
-	cardJSON := buildStreamingCardSkeleton(status, "")
+	cardJSON := buildStreamingCardSkeleton(status, "", initialFooter)
 
 	cardID, err := p.createCardEntity(ctx, cardJSON)
 	if err != nil {

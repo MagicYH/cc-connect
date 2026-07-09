@@ -205,7 +205,7 @@ func TestRenderThinkingContent(t *testing.T) {
 }
 
 func TestBuildStreamingCardSkeleton(t *testing.T) {
-	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "")
+	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "", "")
 	var card map[string]any
 	if err := json.Unmarshal([]byte(raw), &card); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
@@ -289,8 +289,39 @@ func TestBuildStreamingCardSkeleton(t *testing.T) {
 	}
 }
 
+func TestBuildStreamingCardSkeletonIncludesInitialFooter(t *testing.T) {
+	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "", "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-stream-123")
+	var card map[string]any
+	if err := json.Unmarshal([]byte(raw), &card); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	body, _ := card["body"].(map[string]any)
+	elems, _ := body["elements"].([]any)
+	var footer map[string]any
+	for _, e := range elems {
+		em, _ := e.(map[string]any)
+		if em["element_id"] == streamingElementFooterNote {
+			footer = em
+			break
+		}
+	}
+	if footer == nil {
+		t.Fatal("footer note element not found")
+	}
+	if footer["content"] != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-stream-123" {
+		t.Fatalf("footer content = %#v", footer["content"])
+	}
+	if footer["text_size"] != "notation" {
+		t.Fatalf("footer text_size = %#v, want notation", footer["text_size"])
+	}
+	if footer["text_color"] != "grey" {
+		t.Fatalf("footer text_color = %#v, want grey", footer["text_color"])
+	}
+}
+
 func TestBuildStreamingCardSkeletonWithThinking(t *testing.T) {
-	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "Analyzing code...")
+	raw := buildStreamingCardSkeleton(core.CardStatusThinking, "Analyzing code...", "")
 	var card map[string]any
 	if err := json.Unmarshal([]byte(raw), &card); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
@@ -350,7 +381,7 @@ func TestBuildStreamingCardSkeletonWithThinking(t *testing.T) {
 	}
 
 	// Verify done status uses green
-	rawDone := buildStreamingCardSkeleton(core.CardStatusDone, "")
+	rawDone := buildStreamingCardSkeleton(core.CardStatusDone, "", "")
 	var cardDone map[string]any
 	if err := json.Unmarshal([]byte(rawDone), &cardDone); err != nil {
 		t.Fatalf("invalid JSON for done card: %v", err)
@@ -361,7 +392,7 @@ func TestBuildStreamingCardSkeletonWithThinking(t *testing.T) {
 	}
 
 	// Verify error status uses red
-	rawErr := buildStreamingCardSkeleton(core.CardStatusError, "")
+	rawErr := buildStreamingCardSkeleton(core.CardStatusError, "", "")
 	var cardErr map[string]any
 	if err := json.Unmarshal([]byte(rawErr), &cardErr); err != nil {
 		t.Fatalf("invalid JSON for error card: %v", err)
@@ -466,7 +497,7 @@ func TestStreamSlotContentRoutesToSlotAPI(t *testing.T) {
 
 func TestStreamingCardLifecycle(t *testing.T) {
 	// 1. Build skeleton
-	skeleton := buildStreamingCardSkeleton(core.CardStatusThinking, "")
+	skeleton := buildStreamingCardSkeleton(core.CardStatusThinking, "", "")
 	var card map[string]any
 	if err := json.Unmarshal([]byte(skeleton), &card); err != nil {
 		t.Fatalf("skeleton parse error: %v", err)

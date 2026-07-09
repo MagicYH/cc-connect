@@ -195,9 +195,11 @@ type ReplyContextChatID interface {
 type StreamingRichCardSupporter interface {
 	// BuildStreamingCard creates the initial multi-slot card skeleton, sends it
 	// via the platform's PreviewStarter, and returns an opaque handle.
+	// initialFooter is the pre-composed status footer to show in the skeleton before
+	// finalization; pass empty string to keep the footer blank.
 	// Returns ErrSlotNotSupported if cardEntity creation fails (engine falls back
 	// to RichCardSupporter path).
-	BuildStreamingCard(ctx context.Context, chatID string, status CardStatus, title string) (handle any, err error)
+	BuildStreamingCard(ctx context.Context, chatID string, status CardStatus, title string, initialFooter string) (handle any, err error)
 
 	// StreamSlotContent patches a single slot's markdown via cardElement.content().
 	// The engine passes structured data via SlotContent; the platform renders it
