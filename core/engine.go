@@ -6886,12 +6886,12 @@ func (e *Engine) composeRichStatusFooter(streaming bool, turnStart time.Time, ag
 func (e *Engine) composeInitialRichStatusFooter(agent Agent, session AgentSession, workspaceDir string) string {
 	var lines []string
 	if e.showContextIndicator {
-		if model := strings.TrimSpace(replyFooterModel(session, agent)); model != "" {
+		if model := replyFooterModel(session, agent); model != "" {
 			lines = append(lines, "model: "+model)
 		}
 	}
 	if e.showWorkdirIndicator {
-		if dir := strings.TrimSpace(replyFooterWorkDir(session, agent, workspaceDir)); dir != "" {
+		if dir := replyFooterWorkDir(session, agent, workspaceDir); dir != "" {
 			lines = append(lines, "cwd: "+dir)
 		}
 	}

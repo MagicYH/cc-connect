@@ -36,8 +36,8 @@ Change `composeRichStatusFooter` so the streaming path returns a lightweight ini
 The streaming footer should contain only stable metadata that is expected to be available before result-token accounting settles:
 
 ```text
-model: <model> · session: <session>
-cwd: <workdir>
+model: <model>
+cwd: <workdir> · <session>
 ```
 
 Rules:

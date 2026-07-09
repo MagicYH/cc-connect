@@ -1604,9 +1604,6 @@ func TestComposeRichStatusFooter_StreamingRecomputesLateSessionID(t *testing.T) 
 	}
 
 	first := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
-	if strings.Contains(first, "session:") || strings.Contains(first, " · ") {
-		t.Fatalf("first streaming footer has malformed empty session: %q", first)
-	}
 	if first != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture" {
 		t.Fatalf("first streaming footer = %q", first)
 	}
@@ -1619,27 +1616,25 @@ func TestComposeRichStatusFooter_StreamingRecomputesLateSessionID(t *testing.T) 
 }
 
 func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
-	session := &controllableAgentSession{
-		sessionID: "sess-toggle-123",
-		alive:     true,
-		events:    make(chan Event, 1),
-		closed:    make(chan struct{}),
-		model:     "claude-test-model",
-	}
-
 	tests := []struct {
-		name       string
-		master     bool
-		showCtx    bool
-		showWork   bool
-		want       string
-		forbidden  []string
+		name      string
+		master    bool
+		showCtx   bool
+		showWork  bool
+		model     string
+		sessionID string
+		workspace string
+		want      string
+		forbidden []string
 	}{
 		{
 			name:      "master off suppresses all footer text",
 			master:    false,
 			showCtx:   true,
 			showWork:  true,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
 			want:      "",
 		},
 		{
@@ -1647,6 +1642,9 @@ func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
 			master:    true,
 			showCtx:   false,
 			showWork:  true,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
 			want:      "cwd: /tmp/cc-connect-fixture · sess-toggle-123",
 			forbidden: []string{"claude-test-model", "model:"},
 		},
@@ -1655,8 +1653,18 @@ func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
 			master:    true,
 			showCtx:   true,
 			showWork:  false,
+			model:     "claude-test-model",
+			sessionID: "sess-toggle-123",
+			workspace: "/tmp/cc-connect-fixture",
 			want:      "model: claude-test-model",
 			forbidden: []string{"cwd:", "sess-toggle-123"},
+		},
+		{
+			name:     "all metadata missing returns empty footer",
+			master:   true,
+			showCtx:  true,
+			showWork: true,
+			want:     "",
 		},
 	}
 
@@ -1667,7 +1675,14 @@ func TestComposeRichStatusFooter_StreamingRespectsFooterToggles(t *testing.T) {
 			e.SetShowContextIndicator(tt.showCtx)
 			e.SetShowWorkdirIndicator(tt.showWork)
 
-			got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
+			session := &controllableAgentSession{
+				sessionID: tt.sessionID,
+				alive:     true,
+				events:    make(chan Event, 1),
+				closed:    make(chan struct{}),
+				model:     tt.model,
+			}
+			got := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, tt.workspace)
 			if got != tt.want {
 				t.Fatalf("streaming footer = %q, want %q", got, tt.want)
 			}
