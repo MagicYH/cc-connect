@@ -15575,13 +15575,15 @@ func (s *stubRichCardOnly) BuildRichCard(status CardStatus, title string, steps 
 // stubStreamingCardOnly implements Platform + StreamingRichCardSupporter (no RichCardSupporter).
 type stubStreamingCardOnly struct {
 	stubPlatformEngine
-	built     bool
-	slots     map[StreamingSlotID]SlotContent
-	finalized bool
+	built         bool
+	initialFooter string
+	slots         map[StreamingSlotID]SlotContent
+	finalized     bool
 }
 
-func (s *stubStreamingCardOnly) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+func (s *stubStreamingCardOnly) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string, initialFooter string) (any, error) {
 	s.built = true
+	s.initialFooter = initialFooter
 	s.slots = make(map[StreamingSlotID]SlotContent)
 	return "streaming-handle", nil
 }
@@ -15602,6 +15604,7 @@ type stubStreamingAndRichCard struct {
 	stubPlatformEngine
 	chatID        string
 	built         bool
+	initialFooter string
 	slots         map[StreamingSlotID]SlotContent
 	finalized     bool
 	finalizeErr   error
@@ -15612,8 +15615,9 @@ type stubStreamingAndRichCard struct {
 
 func (s *stubStreamingAndRichCard) ChatID() string { return s.chatID }
 
-func (s *stubStreamingAndRichCard) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string) (any, error) {
+func (s *stubStreamingAndRichCard) BuildStreamingCard(_ context.Context, _ string, _ CardStatus, _ string, initialFooter string) (any, error) {
 	s.built = true
+	s.initialFooter = initialFooter
 	s.slots = make(map[StreamingSlotID]SlotContent)
 	return "streaming-handle", nil
 }
@@ -15711,6 +15715,51 @@ func TestExtractChatID(t *testing.T) {
 // TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard verifies that
 // when FinalizeStreamingCard fails, the engine falls back to the RichCardSupporter
 // path instead of leaving the card stuck in "Thinking/Working" state.
+func TestProcessInteractiveEvents_BuildStreamingCardReceivesInitialFooter(t *testing.T) {
+	p := &stubStreamingAndRichCard{
+		stubPlatformEngine: stubPlatformEngine{n: "feishu"},
+		chatID:             "oc_test",
+	}
+
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+	e.SetDisplayConfig(DisplayCfg{
+		ThinkingMessages: true,
+		ThinkingMaxLen:   300,
+		ToolMaxLen:       500,
+		ToolMessages:     true,
+		Mode:             "full",
+		CardMode:         "rich",
+	})
+	e.SetReplyFooterEnabled(true)
+	e.SetShowContextIndicator(true)
+	e.SetShowWorkdirIndicator(true)
+
+	sessionKey := "feishu:user-stream-initial-footer"
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	agentSession := newControllableSession("sess-slot-123")
+	agentSession.model = "claude-test-model"
+	state := &interactiveState{
+		agentSession: agentSession,
+		platform:     p,
+		replyCtx:     chatIDReplyCtx{chatID: "oc_test"},
+		workspaceDir: "/tmp/cc-connect-fixture",
+	}
+	e.interactiveStates[sessionKey] = state
+
+	agentSession.events <- Event{Type: EventText, Content: "Hello world"}
+	agentSession.events <- Event{Type: EventResult, Content: "Hello world", Done: true}
+
+	e.processInteractiveEvents(state, session, e.sessions, sessionKey, "m-stream-initial-footer", time.Now(), nil, nil, state.replyCtx)
+
+	if !p.built {
+		t.Fatal("expected BuildStreamingCard to be called")
+	}
+	want := "model: claude-test-model\ncwd: /tmp/cc-connect-fixture · sess-slot-123"
+	if p.initialFooter != want {
+		t.Fatalf("initial footer = %q, want %q", p.initialFooter, want)
+	}
+}
+
 func TestProcessInteractiveEvents_StreamingCardFinalizeFallsBackToRichCard(t *testing.T) {
 	p := &stubStreamingAndRichCard{
 		stubPlatformEngine: stubPlatformEngine{n: "feishu"},

@@ -4598,7 +4598,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				hasStreamingCardSupport = false
 				return fmt.Errorf("no chatID available for streaming card")
 			}
-			handle, err := streamingCardSupporter.BuildStreamingCard(e.ctx, chatID, status, title)
+			initialFooter := e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir)
+			handle, err := streamingCardSupporter.BuildStreamingCard(e.ctx, chatID, status, title, initialFooter)
 			if err != nil {
 				slog.Debug("engine: BuildStreamingCard failed, falling back to RichCardSupporter", "error", err)
 				streamingCardDisabled = true
