@@ -81,9 +81,6 @@ func TestComposeRichStatusFooter_StreamingRecomputesLateSessionID(t *testing.T) 
 	}
 
 	first := e.composeRichStatusFooter(true, time.Now(), &stubAgent{}, session, "/tmp/cc-connect-fixture")
-	if strings.Contains(first, "session:") || strings.Contains(first, " · ") {
-		t.Fatalf("first streaming footer has malformed empty session: %q", first)
-	}
 	if first != "model: claude-test-model\ncwd: /tmp/cc-connect-fixture" {
 		t.Fatalf("first streaming footer = %q", first)
 	}
