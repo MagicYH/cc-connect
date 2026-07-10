@@ -58,7 +58,19 @@
       "providers": "Proveedores",
       "heartbeat": "Latido",
       "settings": "Ajustes"
-    }
+    },
+    "systemPrompt": "Prompt del sistema",
+    "systemPromptHint": "Se envía al agente como su prompt del sistema. Requiere reinicio.",
+    "systemPromptPlaceholder": "Prompt del sistema personalizado opcional para este proyecto",
+    "workspaceMode": "Modo de espacio de trabajo",
+    "workspaceModeSingle": "Único (directorio fijo)",
+    "workspaceModeMulti": "Multiespacio de trabajo",
+    "workspaceModeChangeHint": "Cambiar el modo de espacio de trabajo requiere reinicio.",
+    "baseDir": "Directorio base",
+    "baseDirHint": "Directorio padre que contiene un subdirectorio por espacio de trabajo.",
+    "baseDirRequired": "El modo multiespacio de trabajo requiere un directorio base.",
+    "subscriptionsEnabled": "Suscripciones",
+    "subscriptionsEnabledHint": "Habilita la función de suscripción de investigación automática. Requiere reinicio."
   },
   "sessions": {
     "title": "Sesiones",

@@ -58,7 +58,19 @@
       "providers": "プロバイダー",
       "heartbeat": "ハートビート",
       "settings": "設定"
-    }
+    },
+    "systemPrompt": "システムプロンプト",
+    "systemPromptHint": "エージェントにシステムプロンプトとして送信されます。再起動が必要です。",
+    "systemPromptPlaceholder": "このプロジェクト用の任意のカスタムシステムプロンプト",
+    "workspaceMode": "ワークスペースモード",
+    "workspaceModeSingle": "単一（固定ディレクトリ）",
+    "workspaceModeMulti": "マルチワークスペース",
+    "workspaceModeChangeHint": "ワークスペースモードの変更には再起動が必要です。",
+    "baseDir": "ベースディレクトリ",
+    "baseDirHint": "各ワークスペースのサブディレクトリを格納する親ディレクトリ。",
+    "baseDirRequired": "マルチワークスペースモードにはベースディレクトリが必要です。",
+    "subscriptionsEnabled": "サブスクリプション",
+    "subscriptionsEnabledHint": "自動調査サブスクリプション機能を有効にします。再起動が必要です。"
   },
   "sessions": {
     "title": "セッション",

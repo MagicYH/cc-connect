@@ -56,6 +56,15 @@ export default function ProjectDetail() {
   const [platformAllowFrom, setPlatformAllowFrom] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
+  // Startup-only settings (require restart). Initial snapshots let us send
+  // these fields only when they actually change, so unrelated saves don't
+  // spuriously demand a restart.
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [workspaceMode, setWorkspaceMode] = useState('');
+  const [baseDir, setBaseDir] = useState('');
+  const [subscriptionsEnabled, setSubscriptionsEnabled] = useState(false);
+  const [initial, setInitial] = useState({ systemPrompt: '', workspaceMode: '', baseDir: '', subscriptionsEnabled: false });
+
   // Agent type
   const [agentTypes, setAgentTypes] = useState<string[]>([]);
   const [selectedAgentType, setSelectedAgentType] = useState('');
@@ -140,6 +149,15 @@ export default function ProjectDetail() {
         setShowWorkdirIndicator(proj.value.show_workdir_indicator !== false);
         setReplyFooter(proj.value.reply_footer !== false);
         setInjectSender(proj.value.inject_sender === true);
+        const sp = proj.value.system_prompt || '';
+        const wm = proj.value.workspace_mode || '';
+        const bd = proj.value.base_dir || '';
+        const subs = proj.value.subscriptions_enabled === true;
+        setSystemPrompt(sp);
+        setWorkspaceMode(wm);
+        setBaseDir(bd);
+        setSubscriptionsEnabled(subs);
+        setInitial({ systemPrompt: sp, workspaceMode: wm, baseDir: bd, subscriptionsEnabled: subs });
         setProviderRefs(proj.value.provider_refs || []);
         const afMap: Record<string, string> = {};
         proj.value.platform_configs?.forEach(pc => {
@@ -175,14 +193,20 @@ export default function ProjectDetail() {
 
   const handleSaveSettings = async () => {
     if (!name) return;
+    if (workspaceMode === 'multi-workspace' && !baseDir.trim()) {
+      alert(t('projects.baseDirRequired', 'Multi-workspace mode requires a base directory.'));
+      return;
+    }
     setSaving(true);
     try {
       const agentTypeChanged = project && selectedAgentType !== project.agent_type;
+      // In multi-workspace mode work_dir must be empty (base_dir is used instead).
+      const effectiveWorkDir = workspaceMode === 'multi-workspace' ? '' : workDir;
       const res = await updateProject(name, {
         language,
         admin_from: adminFrom,
         disabled_commands: disabledCmds.split(',').map(s => s.trim()).filter(Boolean),
-        work_dir: workDir,
+        work_dir: effectiveWorkDir,
         mode: agentMode,
         ...(agentTypeChanged ? { agent_type: selectedAgentType } : {}),
         show_context_indicator: showCtxIndicator,
@@ -190,12 +214,20 @@ export default function ProjectDetail() {
         reply_footer: replyFooter,
         inject_sender: injectSender,
         platform_allow_from: platformAllowFrom,
+        // Startup-only fields: send only when changed so unrelated saves
+        // don't trigger a restart prompt.
+        ...(systemPrompt !== initial.systemPrompt ? { system_prompt: systemPrompt } : {}),
+        ...(workspaceMode !== initial.workspaceMode ? { workspace_mode: workspaceMode } : {}),
+        ...(baseDir !== initial.baseDir ? { base_dir: baseDir } : {}),
+        ...(subscriptionsEnabled !== initial.subscriptionsEnabled ? { subscriptions_enabled: subscriptionsEnabled } : {}),
       });
       if (res && (res as any).restart_required) {
         setShowRestartModal(true);
         return;
       }
       await fetchAll();
+    } catch (e: any) {
+      alert(e?.message || String(e));
     } finally {
       setSaving(false);
     }
@@ -509,7 +541,30 @@ export default function ProjectDetail() {
                 <p className="text-[11px] text-amber-500 mt-1">{t('projects.agentTypeChangeHint', 'Changing agent type requires restart. Incompatible providers will be removed.')}</p>
               )}
             </div>
-            <Input label={t('projects.workDir', 'Working directory')} value={workDir} onChange={(e) => setWorkDir(e.target.value)} placeholder="/path/to/project" />
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                {t('projects.workspaceMode', 'Workspace mode')}
+              </label>
+              <select
+                value={workspaceMode}
+                onChange={(e) => setWorkspaceMode(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50"
+              >
+                <option value="">{t('projects.workspaceModeSingle', 'Single (fixed directory)')}</option>
+                <option value="multi-workspace">{t('projects.workspaceModeMulti', 'Multi-workspace')}</option>
+              </select>
+              {workspaceMode !== initial.workspaceMode && (
+                <p className="text-[11px] text-amber-500 mt-1">{t('projects.workspaceModeChangeHint', 'Changing workspace mode requires restart.')}</p>
+              )}
+            </div>
+            {workspaceMode === 'multi-workspace' ? (
+              <div>
+                <Input label={t('projects.baseDir', 'Base directory')} value={baseDir} onChange={(e) => setBaseDir(e.target.value)} placeholder="/path/to/workspaces" />
+                <p className="text-[11px] text-gray-400 mt-1">{t('projects.baseDirHint', 'Parent directory holding one sub-directory per workspace.')}</p>
+              </div>
+            ) : (
+              <Input label={t('projects.workDir', 'Working directory')} value={workDir} onChange={(e) => setWorkDir(e.target.value)} placeholder="/path/to/project" />
+            )}
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                 {t('projects.agentMode', 'Permission mode')}
@@ -525,6 +580,19 @@ export default function ProjectDetail() {
                 <option value="bypassPermissions">bypassPermissions (yolo)</option>
                 <option value="dontAsk">dontAsk</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                {t('projects.systemPrompt', 'System prompt')}
+              </label>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={4}
+                placeholder={t('projects.systemPromptPlaceholder', 'Optional custom system prompt for this project')}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">{t('projects.systemPromptHint', 'Sent to the agent as its system prompt. Requires restart.')}</p>
             </div>
           </div>
         </Card>
@@ -579,6 +647,18 @@ export default function ProjectDetail() {
                 className={cn('w-10 h-6 rounded-full transition-colors', injectSender ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-700')}
               >
                 <div className={cn('w-4 h-4 bg-white rounded-full transition-transform mx-1', injectSender ? 'translate-x-4' : 'translate-x-0')} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('projects.subscriptionsEnabled', 'Subscriptions')}</label>
+                <p className="text-[11px] text-gray-400 mt-0.5">{t('projects.subscriptionsEnabledHint', 'Enable the auto-investigation subscription feature. Requires restart.')}</p>
+              </div>
+              <button
+                onClick={() => setSubscriptionsEnabled(!subscriptionsEnabled)}
+                className={cn('w-10 h-6 rounded-full transition-colors', subscriptionsEnabled ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-700')}
+              >
+                <div className={cn('w-4 h-4 bg-white rounded-full transition-transform mx-1', subscriptionsEnabled ? 'translate-x-4' : 'translate-x-0')} />
               </button>
             </div>
             <Input label={t('projects.language')} value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en, zh, ja..." />

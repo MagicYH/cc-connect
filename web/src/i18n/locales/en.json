@@ -58,7 +58,19 @@
       "providers": "Providers",
       "heartbeat": "Heartbeat",
       "settings": "Settings"
-    }
+    },
+    "systemPrompt": "System prompt",
+    "systemPromptHint": "Sent to the agent as its system prompt. Requires restart.",
+    "systemPromptPlaceholder": "Optional custom system prompt for this project",
+    "workspaceMode": "Workspace mode",
+    "workspaceModeSingle": "Single (fixed directory)",
+    "workspaceModeMulti": "Multi-workspace",
+    "workspaceModeChangeHint": "Changing workspace mode requires restart.",
+    "baseDir": "Base directory",
+    "baseDirHint": "Parent directory holding one sub-directory per workspace.",
+    "baseDirRequired": "Multi-workspace mode requires a base directory.",
+    "subscriptionsEnabled": "Subscriptions",
+    "subscriptionsEnabledHint": "Enable the auto-investigation subscription feature. Requires restart."
   },
   "sessions": {
     "title": "Sessions",

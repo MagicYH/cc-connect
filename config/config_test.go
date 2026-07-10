@@ -2655,6 +2655,97 @@ func TestGetProjectConfigDetails(t *testing.T) {
 	if !ok || len(pcs) < 2 {
 		t.Fatalf("platform_configs = %#v", details["platform_configs"])
 	}
+	// Single (non multi-workspace) project surfaces an empty workspace_mode and
+	// the subscriptions flag defaulting to false.
+	if details["workspace_mode"] != "" {
+		t.Fatalf("workspace_mode = %v, want empty", details["workspace_mode"])
+	}
+	if details["subscriptions_enabled"] != false {
+		t.Fatalf("subscriptions_enabled = %v, want false", details["subscriptions_enabled"])
+	}
+}
+
+func TestSaveProjectSettings_StartupFields(t *testing.T) {
+	configPath := writeConfigFixture(t, feishuConfigFixture)
+	patchConfigPath(t, configPath)
+
+	sp := "You are a helpful assistant."
+	subs := true
+	err := SaveProjectSettings("alpha", ProjectSettingsUpdate{
+		SystemPrompt:         &sp,
+		SubscriptionsEnabled: &subs,
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectSettings: %v", err)
+	}
+
+	cfg := readConfigFixture(t, configPath)
+	proj := cfg.Projects[0]
+	if got := stringMapValue(proj.Agent.Options, "system_prompt"); got != sp {
+		t.Fatalf("system_prompt = %q, want %q", got, sp)
+	}
+	if proj.SubscriptionsEnabled == nil || !*proj.SubscriptionsEnabled {
+		t.Fatalf("SubscriptionsEnabled = %v, want true", proj.SubscriptionsEnabled)
+	}
+
+	// Reading it back through GetProjectConfigDetails surfaces the same values.
+	details := GetProjectConfigDetails("alpha")
+	if details["system_prompt"] != sp {
+		t.Fatalf("details system_prompt = %v", details["system_prompt"])
+	}
+	if details["subscriptions_enabled"] != true {
+		t.Fatalf("details subscriptions_enabled = %v", details["subscriptions_enabled"])
+	}
+}
+
+func TestSaveProjectSettings_MultiWorkspaceSwitchesModeAndClearsWorkDir(t *testing.T) {
+	configPath := writeConfigFixture(t, feishuConfigFixture)
+	patchConfigPath(t, configPath)
+
+	mode := "multi-workspace"
+	base := "/tmp/workspaces"
+	err := SaveProjectSettings("alpha", ProjectSettingsUpdate{
+		WorkspaceMode: &mode,
+		BaseDir:       &base,
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectSettings: %v", err)
+	}
+
+	cfg := readConfigFixture(t, configPath)
+	proj := cfg.Projects[0]
+	if proj.Mode != "multi-workspace" {
+		t.Fatalf("Mode = %q, want multi-workspace", proj.Mode)
+	}
+	if proj.BaseDir != base {
+		t.Fatalf("BaseDir = %q, want %q", proj.BaseDir, base)
+	}
+	// work_dir must be removed to satisfy the loader's mutual-exclusion rule.
+	if _, ok := proj.Agent.Options["work_dir"]; ok {
+		t.Fatalf("work_dir still present in options: %#v", proj.Agent.Options)
+	}
+
+	details := GetProjectConfigDetails("alpha")
+	if details["workspace_mode"] != "multi-workspace" {
+		t.Fatalf("details workspace_mode = %v", details["workspace_mode"])
+	}
+	if details["base_dir"] != base {
+		t.Fatalf("details base_dir = %v", details["base_dir"])
+	}
+}
+
+func TestSaveProjectSettings_MultiWorkspaceRequiresBaseDir(t *testing.T) {
+	configPath := writeConfigFixture(t, feishuConfigFixture)
+	patchConfigPath(t, configPath)
+
+	mode := "multi-workspace"
+	err := SaveProjectSettings("alpha", ProjectSettingsUpdate{WorkspaceMode: &mode})
+	if err == nil {
+		t.Fatal("expected error when enabling multi-workspace without base_dir")
+	}
+	if !strings.Contains(err.Error(), "base_dir") {
+		t.Fatalf("error = %v, want mention of base_dir", err)
+	}
 }
 
 func TestAddPlatformToProject_NewProjectWithAgentTypeAndWorkDir(t *testing.T) {

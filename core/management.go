@@ -32,6 +32,10 @@ type ProjectSettingsUpdate struct {
 	ReplyFooter          *bool
 	InjectSender         *bool
 	PlatformAllowFrom    map[string]string
+	SystemPrompt         *string
+	WorkspaceMode        *string
+	BaseDir              *string
+	SubscriptionsEnabled *bool
 }
 
 // ManagementServer provides an HTTP REST API for external management tools
@@ -739,6 +743,10 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			ReplyFooter          *bool             `json:"reply_footer"`
 			InjectSender         *bool             `json:"inject_sender"`
 			PlatformAllowFrom    map[string]string `json:"platform_allow_from"`
+			SystemPrompt         *string           `json:"system_prompt"`
+			WorkspaceMode        *string           `json:"workspace_mode"`
+			BaseDir              *string           `json:"base_dir"`
+			SubscriptionsEnabled *bool             `json:"subscriptions_enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -789,6 +797,11 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 		}
 
 		restartRequired := false
+		// These fields are only consumed at engine startup, so a restart is
+		// required for the change to take effect.
+		if body.SystemPrompt != nil || body.WorkspaceMode != nil || body.BaseDir != nil || body.SubscriptionsEnabled != nil {
+			restartRequired = true
+		}
 		if body.AgentType != nil && *body.AgentType != e.agent.Name() {
 			registered := ListRegisteredAgents()
 			found := false
@@ -818,9 +831,15 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 				ReplyFooter:          body.ReplyFooter,
 				InjectSender:         body.InjectSender,
 				PlatformAllowFrom:    body.PlatformAllowFrom,
+				SystemPrompt:         body.SystemPrompt,
+				WorkspaceMode:        body.WorkspaceMode,
+				BaseDir:              body.BaseDir,
+				SubscriptionsEnabled: body.SubscriptionsEnabled,
 			}
 			if err := m.saveProjectSettings(name, patch); err != nil {
 				slog.Warn("management: failed to persist project settings", "project", name, "error", err)
+				mgmtError(w, http.StatusBadRequest, err.Error())
+				return
 			}
 		}
 

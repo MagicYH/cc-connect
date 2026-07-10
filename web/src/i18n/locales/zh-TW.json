@@ -58,7 +58,19 @@
       "providers": "供應商",
       "heartbeat": "心跳",
       "settings": "設定"
-    }
+    },
+    "systemPrompt": "系統提示詞",
+    "systemPromptHint": "作為系統提示詞傳送給 Agent，需要重啟生效。",
+    "systemPromptPlaceholder": "為此專案設定可選的自訂系統提示詞",
+    "workspaceMode": "工作區模式",
+    "workspaceModeSingle": "單一（固定目錄）",
+    "workspaceModeMulti": "多工作區",
+    "workspaceModeChangeHint": "切換工作區模式需要重啟。",
+    "baseDir": "基準目錄",
+    "baseDirHint": "存放各工作區子目錄的父目錄。",
+    "baseDirRequired": "多工作區模式需要設定基準目錄。",
+    "subscriptionsEnabled": "訂閱",
+    "subscriptionsEnabledHint": "啟用自動調查訂閱功能，需要重啟生效。"
   },
   "sessions": {
     "title": "工作階段",

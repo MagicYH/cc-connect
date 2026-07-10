@@ -18,6 +18,10 @@ export interface ProjectDetail {
   agent_type: string;
   work_dir?: string;
   agent_mode?: string;
+  system_prompt?: string;
+  workspace_mode?: string;
+  base_dir?: string;
+  subscriptions_enabled?: boolean;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
@@ -47,6 +51,10 @@ export interface ProjectSettingsUpdate {
   work_dir?: string;
   mode?: string;
   agent_type?: string;
+  system_prompt?: string;
+  workspace_mode?: string;
+  base_dir?: string;
+  subscriptions_enabled?: boolean;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;

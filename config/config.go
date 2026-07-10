@@ -3054,6 +3054,15 @@ type ProjectSettingsUpdate struct {
 	ReplyFooter          *bool
 	InjectSender         *bool
 	PlatformAllowFrom    map[string]string
+	// SystemPrompt sets the project agent's system_prompt option (empty clears it).
+	SystemPrompt *string
+	// WorkspaceMode sets the top-level project mode ("" for single, "multi-workspace").
+	// Distinct from Mode, which is the agent permission mode.
+	WorkspaceMode *string
+	// BaseDir sets the top-level parent directory used in multi-workspace mode.
+	BaseDir *string
+	// SubscriptionsEnabled toggles the per-project subscription feature.
+	SubscriptionsEnabled *bool
 }
 
 // SaveProjectSettings persists project-level settings and the global language to config.toml.
@@ -3142,6 +3151,27 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 			v := *update.InjectSender
 			proj.InjectSender = &v
 		}
+		if update.SubscriptionsEnabled != nil {
+			v := *update.SubscriptionsEnabled
+			proj.SubscriptionsEnabled = &v
+		}
+		if update.SystemPrompt != nil {
+			if proj.Agent.Options == nil {
+				proj.Agent.Options = map[string]any{}
+			}
+			sp := strings.TrimSpace(*update.SystemPrompt)
+			if sp == "" {
+				delete(proj.Agent.Options, "system_prompt")
+			} else {
+				proj.Agent.Options["system_prompt"] = sp
+			}
+		}
+		if update.WorkspaceMode != nil {
+			proj.Mode = strings.TrimSpace(*update.WorkspaceMode)
+		}
+		if update.BaseDir != nil {
+			proj.BaseDir = strings.TrimSpace(*update.BaseDir)
+		}
 		if update.WorkDir != nil || update.Mode != nil {
 			if proj.Agent.Options == nil {
 				proj.Agent.Options = map[string]any{}
@@ -3186,6 +3216,19 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 				proj.Platforms[j].Options["allow_from"] = strings.TrimSpace(af)
 			}
 		}
+		// Enforce multi-workspace / single-mode invariants so we never
+		// persist a config the loader would reject (see loadConfig validation).
+		if proj.Mode == "multi-workspace" {
+			if proj.Agent.Options != nil {
+				delete(proj.Agent.Options, "work_dir")
+			}
+			if proj.BaseDir == "" {
+				return fmt.Errorf("project %q: multi-workspace mode requires base_dir", projectName)
+			}
+		} else {
+			// Single mode: base_dir is meaningless; clear it to avoid confusion.
+			proj.BaseDir = ""
+		}
 		return saveConfig(cfg)
 	}
 	return fmt.Errorf("project %q not found", projectName)
@@ -3216,7 +3259,16 @@ func GetProjectConfigDetails(projectName string) map[string]any {
 			if mode, ok := p.Agent.Options["mode"].(string); ok && strings.TrimSpace(mode) != "" {
 				result["mode"] = mode
 			}
+			if sp, ok := p.Agent.Options["system_prompt"].(string); ok && strings.TrimSpace(sp) != "" {
+				result["system_prompt"] = sp
+			}
 		}
+		// Workspace mode ("" for single, "multi-workspace") and its base_dir.
+		result["workspace_mode"] = p.Mode
+		if strings.TrimSpace(p.BaseDir) != "" {
+			result["base_dir"] = p.BaseDir
+		}
+		result["subscriptions_enabled"] = p.IsSubscriptionsEnabled()
 		if p.ShowContextIndicator != nil {
 			result["show_context_indicator"] = *p.ShowContextIndicator
 		}
