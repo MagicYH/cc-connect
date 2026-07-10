@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,6 +31,8 @@ func runDaemon(args []string) {
 		daemonStop()
 	case "restart":
 		daemonRestart(args[1:])
+	case "reload":
+		daemonReload()
 	case "status":
 		daemonStatus()
 	case "logs":
@@ -100,6 +103,7 @@ func daemonInstall(args []string) {
 	fmt.Println("Commands:")
 	fmt.Println("  cc-connect daemon status    - Check status")
 	fmt.Println("  cc-connect daemon logs -f   - Follow logs")
+	fmt.Println("  cc-connect daemon reload    - Reload config, prompts, and plugins")
 	fmt.Println("  cc-connect daemon restart   - Restart")
 	fmt.Println("  cc-connect daemon stop      - Stop")
 	fmt.Println("  cc-connect daemon uninstall - Remove")
@@ -290,6 +294,89 @@ func daemonRestart(args []string) {
 	fmt.Println("cc-connect daemon restarted.")
 }
 
+// ── reload ──────────────────────────────────────────────────
+
+func daemonReload() {
+	meta, err := daemon.LoadMeta()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: could not load daemon metadata: %v\n", err)
+		os.Exit(1)
+	}
+
+	port, token, err := readManagementConfig(meta.WorkDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/reload", port)
+	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to call reload API: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "Error: reload failed (HTTP %d): %s\n", resp.StatusCode, body)
+		os.Exit(1)
+	}
+
+	fmt.Println("cc-connect daemon config reloaded.")
+}
+
+// readManagementConfig reads the [management] section from config.toml.
+func readManagementConfig(workDir string) (port int, token string, err error) {
+	configPath := filepath.Join(workDir, "config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return 0, "", fmt.Errorf("read config.toml: %w", err)
+	}
+
+	// Minimal TOML parsing for [management] section.
+	// Avoids importing the full config parser just for two fields.
+	inManagement := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[management]" {
+			inManagement = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && trimmed != "[management]" {
+			inManagement = false
+			continue
+		}
+		if !inManagement {
+			continue
+		}
+		if kv := strings.SplitN(trimmed, "=", 2); len(kv) == 2 {
+			key := strings.TrimSpace(kv[0])
+			val := strings.TrimSpace(kv[1])
+			val = strings.Trim(val, "\"")
+			switch key {
+			case "port":
+				if p, e := strconv.Atoi(val); e == nil && p > 0 {
+					port = p
+				}
+			case "token":
+				token = val
+			}
+		}
+	}
+
+	if port == 0 {
+		port = 9820
+	}
+	if token == "" {
+		return 0, "", fmt.Errorf("[management] token not set in %s", configPath)
+	}
+	return port, token, nil
+}
+
 func requireInstalled(mgr daemon.Manager) {
 	st, _ := mgr.Status()
 	if st == nil || !st.Installed {
@@ -452,6 +539,7 @@ Commands:
   start       Start the service
   stop        Stop the service
   restart     Restart the service
+  reload      Reload config, prompts, and plugins (no downtime)
   status      Show service status
   logs        View log output
 
