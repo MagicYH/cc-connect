@@ -615,6 +615,7 @@ export default function ProjectDetail() {
                 <option value="default">default</option>
                 <option value="acceptEdits">acceptEdits (edit)</option>
                 <option value="plan">plan</option>
+                <option value="auto">auto</option>
                 <option value="bypassPermissions">bypassPermissions (yolo)</option>
                 <option value="dontAsk">dontAsk</option>
               </select>
