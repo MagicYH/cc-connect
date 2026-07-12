@@ -70,7 +70,17 @@
     "baseDirHint": "Directorio padre que contiene un subdirectorio por espacio de trabajo.",
     "baseDirRequired": "El modo multiespacio de trabajo requiere un directorio base.",
     "subscriptionsEnabled": "Suscripciones",
-    "subscriptionsEnabledHint": "Habilita la función de suscripción de investigación automática. Requiere reinicio."
+    "subscriptionsEnabledHint": "Habilita la función de suscripción de investigación automática. Requiere reinicio.",
+    "team": "Equipo",
+    "teamPlaceholder": "Nombre del equipo (vacío = sin equipo)",
+    "memberDescribe": "Descripción del miembro",
+    "memberDescribePlaceholder": "El rol/función de este miembro dentro del equipo",
+    "memberDescribeHint": "Obligatorio cuando se establece Equipo. Se inyecta automáticamente en system_prompt (con la lista de compañeros) al iniciar. Requiere reinicio.",
+    "memberDescribeRequired": "Un miembro del equipo requiere una descripción.",
+    "previewSystemPrompt": "Previsualizar system_prompt compuesto",
+    "previewSystemPromptTitle": "system_prompt compuesto",
+    "previewSystemPromptHint": "Esto es lo que el agente recibirá al iniciar: tu system_prompt más la lista del equipo inyectada automáticamente (incluye ediciones sin guardar).",
+    "previewEmpty": "(vacío)"
   },
   "sessions": {
     "title": "Sesiones",

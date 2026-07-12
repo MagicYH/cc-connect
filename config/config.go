@@ -464,7 +464,16 @@ type ProjectConfig struct {
 	Name    string `toml:"name"`
 	Mode    string `toml:"mode,omitempty"`     // "" or "multi-workspace"
 	BaseDir string `toml:"base_dir,omitempty"` // parent dir for workspaces
-	SkipGit *bool  `toml:"skip_git,omitempty"`
+	// Team, when set, marks this project as a member of a named team. All
+	// projects sharing the same Team value belong to the same team; at startup
+	// cc-connect injects a team roster (this member's describe plus every other
+	// member's role name, Feishu app name, open_id and describe) into the
+	// project's system_prompt. Setting Team requires MemberDescribe.
+	Team string `toml:"team,omitempty"`
+	// MemberDescribe describes this member's function within the team. Required
+	// when Team is set; injected into system_prompt and shared with teammates.
+	MemberDescribe string `toml:"member_describe,omitempty"`
+	SkipGit        *bool  `toml:"skip_git,omitempty"`
 	// WorkspaceInitAllowLocalPaths allows /workspace init and the conversational
 	// init flow to bind existing local directories. Default false keeps init
 	// limited to git URLs; use /workspace bind or /workspace route for explicit
@@ -1028,6 +1037,9 @@ func (c *Config) validateInternal(permissive bool) error {
 			if _, ok := proj.Agent.Options["work_dir"]; ok {
 				return fmt.Errorf("project %q: multi-workspace mode conflicts with agent work_dir (use base_dir instead)", proj.Name)
 			}
+		}
+		if proj.Team != "" && strings.TrimSpace(proj.MemberDescribe) == "" {
+			return fmt.Errorf("project %q: team is set (%q) but member_describe is empty", proj.Name, proj.Team)
 		}
 		if proj.ResetOnIdleMins != nil && *proj.ResetOnIdleMins < 0 {
 			return fmt.Errorf("config: %s.reset_on_idle_mins must be >= 0", prefix)
@@ -3063,6 +3075,10 @@ type ProjectSettingsUpdate struct {
 	BaseDir *string
 	// SubscriptionsEnabled toggles the per-project subscription feature.
 	SubscriptionsEnabled *bool
+	// Team sets the project's team name (empty clears team membership).
+	Team *string
+	// MemberDescribe sets this member's team-role description.
+	MemberDescribe *string
 }
 
 // SaveProjectSettings persists project-level settings and the global language to config.toml.
@@ -3172,6 +3188,12 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 		if update.BaseDir != nil {
 			proj.BaseDir = strings.TrimSpace(*update.BaseDir)
 		}
+		if update.Team != nil {
+			proj.Team = strings.TrimSpace(*update.Team)
+		}
+		if update.MemberDescribe != nil {
+			proj.MemberDescribe = strings.TrimSpace(*update.MemberDescribe)
+		}
 		if update.WorkDir != nil || update.Mode != nil {
 			if proj.Agent.Options == nil {
 				proj.Agent.Options = map[string]any{}
@@ -3229,6 +3251,9 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 			// Single mode: base_dir is meaningless; clear it to avoid confusion.
 			proj.BaseDir = ""
 		}
+		if proj.Team != "" && proj.MemberDescribe == "" {
+			return fmt.Errorf("project %q: team requires a member_describe", projectName)
+		}
 		return saveConfig(cfg)
 	}
 	return fmt.Errorf("project %q not found", projectName)
@@ -3269,6 +3294,10 @@ func GetProjectConfigDetails(projectName string) map[string]any {
 			result["base_dir"] = p.BaseDir
 		}
 		result["subscriptions_enabled"] = p.IsSubscriptionsEnabled()
+		result["team"] = p.Team
+		if strings.TrimSpace(p.MemberDescribe) != "" {
+			result["member_describe"] = p.MemberDescribe
+		}
 		if p.ShowContextIndicator != nil {
 			result["show_context_indicator"] = *p.ShowContextIndicator
 		}

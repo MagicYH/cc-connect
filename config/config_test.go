@@ -173,6 +173,32 @@ func TestConfigValidate(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "rejects team without member_describe",
+			cfg: Config{
+				Projects: []ProjectConfig{
+					func() ProjectConfig {
+						p := validProject("demo")
+						p.Team = "squad"
+						return p
+					}(),
+				},
+			},
+			wantErr: "member_describe is empty",
+		},
+		{
+			name: "accepts team with member_describe",
+			cfg: Config{
+				Projects: []ProjectConfig{
+					func() ProjectConfig {
+						p := validProject("demo")
+						p.Team = "squad"
+						p.MemberDescribe = "reviewer"
+						return p
+					}(),
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2745,6 +2771,46 @@ func TestSaveProjectSettings_MultiWorkspaceRequiresBaseDir(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "base_dir") {
 		t.Fatalf("error = %v, want mention of base_dir", err)
+	}
+}
+
+func TestSaveProjectSettings_TeamFields(t *testing.T) {
+	configPath := writeConfigFixture(t, feishuConfigFixture)
+	patchConfigPath(t, configPath)
+
+	team := "squad"
+	desc := "负责评审"
+	if err := SaveProjectSettings("alpha", ProjectSettingsUpdate{Team: &team, MemberDescribe: &desc}); err != nil {
+		t.Fatalf("SaveProjectSettings: %v", err)
+	}
+	cfg := readConfigFixture(t, configPath)
+	if cfg.Projects[0].Team != team {
+		t.Fatalf("Team = %q, want %q", cfg.Projects[0].Team, team)
+	}
+	if cfg.Projects[0].MemberDescribe != desc {
+		t.Fatalf("MemberDescribe = %q, want %q", cfg.Projects[0].MemberDescribe, desc)
+	}
+
+	details := GetProjectConfigDetails("alpha")
+	if details["team"] != team {
+		t.Fatalf("details team = %v", details["team"])
+	}
+	if details["member_describe"] != desc {
+		t.Fatalf("details member_describe = %v", details["member_describe"])
+	}
+}
+
+func TestSaveProjectSettings_TeamRequiresMemberDescribe(t *testing.T) {
+	configPath := writeConfigFixture(t, feishuConfigFixture)
+	patchConfigPath(t, configPath)
+
+	team := "squad"
+	err := SaveProjectSettings("alpha", ProjectSettingsUpdate{Team: &team})
+	if err == nil {
+		t.Fatal("expected error when setting team without member_describe")
+	}
+	if !strings.Contains(err.Error(), "member_describe") {
+		t.Fatalf("error = %v, want mention of member_describe", err)
 	}
 }
 

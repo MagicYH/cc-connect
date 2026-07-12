@@ -70,7 +70,17 @@
     "baseDirHint": "存放各工作區子目錄的父目錄。",
     "baseDirRequired": "多工作區模式需要設定基準目錄。",
     "subscriptionsEnabled": "訂閱",
-    "subscriptionsEnabledHint": "啟用自動調查訂閱功能，需要重啟生效。"
+    "subscriptionsEnabledHint": "啟用自動調查訂閱功能，需要重啟生效。",
+    "team": "團隊",
+    "teamPlaceholder": "團隊名稱（留空表示不屬於團隊）",
+    "memberDescribe": "成員描述",
+    "memberDescribePlaceholder": "該成員在團隊中的角色/職能",
+    "memberDescribeHint": "設定團隊後必填。啟動時會連同其他成員名單自動注入 system_prompt，需要重啟生效。",
+    "memberDescribeRequired": "團隊成員必須填寫成員描述。",
+    "previewSystemPrompt": "預覽合成後的 system_prompt",
+    "previewSystemPromptTitle": "合成後的 system_prompt",
+    "previewSystemPromptHint": "這是 Agent 啟動時實際收到的內容：你的 system_prompt 加上自動注入的團隊名單（包含未儲存的編輯）。",
+    "previewEmpty": "（空）"
   },
   "sessions": {
     "title": "工作階段",

@@ -22,6 +22,8 @@ export interface ProjectDetail {
   workspace_mode?: string;
   base_dir?: string;
   subscriptions_enabled?: boolean;
+  team?: string;
+  member_describe?: string;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
@@ -55,6 +57,8 @@ export interface ProjectSettingsUpdate {
   workspace_mode?: string;
   base_dir?: string;
   subscriptions_enabled?: boolean;
+  team?: string;
+  member_describe?: string;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
@@ -62,11 +66,24 @@ export interface ProjectSettingsUpdate {
   platform_allow_from?: Record<string, string>;
 }
 
+export interface SystemPromptPreview {
+  base: string;
+  team: string;
+  composed: string;
+}
+
 export const listAgentTypes = () => api.get<{ agents: string[]; platforms: string[] }>('/agents');
 
 export const listProjects = () => api.get<{ projects: ProjectSummary[] }>('/projects');
 export const getProject = (name: string) => api.get<ProjectDetail>(`/projects/${name}`);
 export const updateProject = (name: string, body: ProjectSettingsUpdate) => api.patch(`/projects/${name}`, body);
+
+// Preview the composed system_prompt (base + auto-injected team roster).
+// Optional overrides reflect unsaved editor state.
+export const previewSystemPrompt = (
+  name: string,
+  body: { system_prompt?: string; team?: string; member_describe?: string },
+) => api.post<SystemPromptPreview>(`/projects/${name}/system-prompt-preview`, body);
 
 export const addPlatformToProject = (projectName: string, body: {
   type: string; options: Record<string, any>; work_dir?: string; agent_type?: string;

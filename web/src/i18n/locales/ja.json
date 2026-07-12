@@ -70,7 +70,17 @@
     "baseDirHint": "各ワークスペースのサブディレクトリを格納する親ディレクトリ。",
     "baseDirRequired": "マルチワークスペースモードにはベースディレクトリが必要です。",
     "subscriptionsEnabled": "サブスクリプション",
-    "subscriptionsEnabledHint": "自動調査サブスクリプション機能を有効にします。再起動が必要です。"
+    "subscriptionsEnabledHint": "自動調査サブスクリプション機能を有効にします。再起動が必要です。",
+    "team": "チーム",
+    "teamPlaceholder": "チーム名（空欄でチームなし）",
+    "memberDescribe": "メンバー説明",
+    "memberDescribePlaceholder": "チーム内でのこのメンバーの役割/機能",
+    "memberDescribeHint": "チーム設定時は必須。起動時に他メンバーの名簿とともに system_prompt へ自動注入されます。再起動が必要です。",
+    "memberDescribeRequired": "チームメンバーにはメンバー説明が必要です。",
+    "previewSystemPrompt": "合成後の system_prompt をプレビュー",
+    "previewSystemPromptTitle": "合成後の system_prompt",
+    "previewSystemPromptHint": "エージェントが起動時に受け取る内容です：あなたの system_prompt に自動注入されたチーム名簿（未保存の編集を含む）を加えたもの。",
+    "previewEmpty": "（空）"
   },
   "sessions": {
     "title": "セッション",

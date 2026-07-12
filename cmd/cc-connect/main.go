@@ -344,27 +344,13 @@ func main() {
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
 	effectiveWorkDirs := make([]string, 0, len(cfg.Projects))
 
-	for _, proj := range cfg.Projects {
-		// Inject project-level run_as_user / run_as_env into the agent's
-		// opts map so agents that support isolation can pick them up
-		// without needing their own top-level config plumbing.
-		if proj.RunAsUser != "" {
-			if proj.Agent.Options == nil {
-				proj.Agent.Options = map[string]any{}
-			}
-			proj.Agent.Options["run_as_user"] = proj.RunAsUser
-			if len(proj.RunAsEnv) > 0 {
-				proj.Agent.Options["run_as_env"] = proj.RunAsEnv
-			}
-		}
-		agent, err := core.CreateAgent(proj.Agent.Type, buildAgentOptions(cfg.DataDir, proj))
-		if err != nil {
-			slog.Error("failed to create agent", "project", proj.Name, "error", err)
-			os.Exit(1)
-		}
-
-		providerWiring := wireAgentProviders(agent, proj.Agent)
-
+	// Phase 1: create every project's platforms up front and resolve team
+	// identities (Feishu open_id + app name), so the team roster can be composed
+	// into each member's system_prompt before its agent is created.
+	platformsByProj := make([][]core.Platform, len(cfg.Projects))
+	teamRegistry := core.NewTeamRegistry()
+	for i := range cfg.Projects {
+		proj := cfg.Projects[i]
 		var platforms []core.Platform
 		for _, pc := range proj.Platforms {
 			opts := make(map[string]any, len(pc.Options)+2)
@@ -380,6 +366,66 @@ func main() {
 			}
 			platforms = append(platforms, p)
 		}
+		platformsByProj[i] = platforms
+		if proj.Team != "" {
+			openID, appName := "", ""
+			for _, p := range platforms {
+				bip, ok := p.(core.BotIdentityProvider)
+				if !ok {
+					continue
+				}
+				oid, an, err := bip.BotIdentity()
+				if err != nil {
+					slog.Warn("team: failed to resolve bot identity", "project", proj.Name, "platform", p.Name(), "error", err)
+					continue
+				}
+				openID, appName = oid, an
+				break
+			}
+			teamRegistry.Add(core.TeamMember{
+				Project:        proj.Name,
+				Team:           proj.Team,
+				MemberDescribe: proj.MemberDescribe,
+				OpenID:         openID,
+				AppName:        appName,
+			})
+		}
+	}
+
+	// Phase 2: create agents (with team-composed system_prompt) and engines.
+	for i := range cfg.Projects {
+		proj := cfg.Projects[i]
+		// Inject project-level run_as_user / run_as_env into the agent's
+		// opts map so agents that support isolation can pick them up
+		// without needing their own top-level config plumbing.
+		if proj.RunAsUser != "" {
+			if proj.Agent.Options == nil {
+				proj.Agent.Options = map[string]any{}
+			}
+			proj.Agent.Options["run_as_user"] = proj.RunAsUser
+			if len(proj.RunAsEnv) > 0 {
+				proj.Agent.Options["run_as_env"] = proj.RunAsEnv
+			}
+		}
+		// Compose the team roster into system_prompt for team members.
+		if proj.Team != "" {
+			if proj.Agent.Options == nil {
+				proj.Agent.Options = map[string]any{}
+			}
+			base, _ := proj.Agent.Options["system_prompt"].(string)
+			composed := teamRegistry.Compose(proj.Name, proj.Team, proj.MemberDescribe, base)
+			proj.Agent.Options["system_prompt"] = composed
+			slog.Info("team: injected roster into system_prompt", "project", proj.Name, "team", proj.Team, "prompt_len", len(composed))
+		}
+		agent, err := core.CreateAgent(proj.Agent.Type, buildAgentOptions(cfg.DataDir, proj))
+		if err != nil {
+			slog.Error("failed to create agent", "project", proj.Name, "error", err)
+			os.Exit(1)
+		}
+
+		providerWiring := wireAgentProviders(agent, proj.Agent)
+
+		platforms := platformsByProj[i]
 
 		workDir, _ := proj.Agent.Options["work_dir"].(string)
 		projectState := core.NewProjectStateStore(projectStatePath(cfg.DataDir, proj.Name))
@@ -1195,9 +1241,12 @@ func main() {
 				WorkspaceMode:        u.WorkspaceMode,
 				BaseDir:              u.BaseDir,
 				SubscriptionsEnabled: u.SubscriptionsEnabled,
+				Team:                 u.Team,
+				MemberDescribe:       u.MemberDescribe,
 			})
 		})
 		mgmtSrv.SetGetProjectConfig(config.GetProjectConfigDetails)
+		mgmtSrv.SetTeamRegistry(teamRegistry)
 		mgmtSrv.SetSaveProviderRefs(config.SaveProviderRefs)
 		mgmtSrv.SetConfigFilePath(configPath)
 		mgmtSrv.SetGetGlobalSettings(config.GetGlobalSettings)

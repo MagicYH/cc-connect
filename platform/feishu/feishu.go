@@ -362,6 +362,26 @@ func (p *Platform) BotID() string {
 	return p.getBotOpenID()
 }
 
+// BotIdentity returns the bot's own open_id and app display name, fetching from
+// the Feishu bot info API on first use and caching the result. Safe to call
+// before Start(). Implements core.BotIdentityProvider.
+func (p *Platform) BotIdentity() (openID, appName string, err error) {
+	p.mu.RLock()
+	oid, name := p.botOpenID, p.botName
+	p.mu.RUnlock()
+	if oid != "" {
+		return oid, name, nil
+	}
+	oid, name, err = p.fetchBotInfo()
+	if err != nil {
+		return "", "", err
+	}
+	p.mu.Lock()
+	p.botOpenID, p.botName = oid, name
+	p.mu.Unlock()
+	return oid, name, nil
+}
+
 func (p *Platform) getBotName() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

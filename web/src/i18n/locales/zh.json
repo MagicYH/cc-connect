@@ -70,7 +70,17 @@
     "baseDirHint": "存放各工作区子目录的父目录。",
     "baseDirRequired": "多工作区模式需要设置基准目录。",
     "subscriptionsEnabled": "订阅",
-    "subscriptionsEnabledHint": "启用自动调查订阅功能，需要重启生效。"
+    "subscriptionsEnabledHint": "启用自动调查订阅功能，需要重启生效。",
+    "team": "团队",
+    "teamPlaceholder": "团队名称（留空表示不属于团队）",
+    "memberDescribe": "成员描述",
+    "memberDescribePlaceholder": "该成员在团队中的角色/职能",
+    "memberDescribeHint": "设置团队后必填。启动时会连同其他成员名单自动注入 system_prompt，需要重启生效。",
+    "memberDescribeRequired": "团队成员必须填写成员描述。",
+    "previewSystemPrompt": "预览合成后的 system_prompt",
+    "previewSystemPromptTitle": "合成后的 system_prompt",
+    "previewSystemPromptHint": "这是 Agent 启动时实际收到的内容：你的 system_prompt 加上自动注入的团队名单（包含未保存的编辑）。",
+    "previewEmpty": "（空）"
   },
   "sessions": {
     "title": "会话",

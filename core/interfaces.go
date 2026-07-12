@@ -261,6 +261,14 @@ type SystemPromptSupporter interface {
 	HasSystemPromptSupport() bool
 }
 
+// BotIdentityProvider is an optional capability for platforms that can report
+// the bot's own identity (open_id and human-readable app name). It is used to
+// build the team roster injected into member system prompts. Implementations
+// should be safe to call before Start().
+type BotIdentityProvider interface {
+	BotIdentity() (openID, appName string, err error)
+}
+
 // SessionIDValidator is an optional interface for agents that can validate
 // whether a stored session ID actually belongs to the current project's
 // session store. The engine uses this to prevent cross-project session

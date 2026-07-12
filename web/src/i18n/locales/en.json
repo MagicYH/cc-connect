@@ -70,7 +70,17 @@
     "baseDirHint": "Parent directory holding one sub-directory per workspace.",
     "baseDirRequired": "Multi-workspace mode requires a base directory.",
     "subscriptionsEnabled": "Subscriptions",
-    "subscriptionsEnabledHint": "Enable the auto-investigation subscription feature. Requires restart."
+    "subscriptionsEnabledHint": "Enable the auto-investigation subscription feature. Requires restart.",
+    "team": "Team",
+    "teamPlaceholder": "Team name (empty = no team)",
+    "memberDescribe": "Member description",
+    "memberDescribePlaceholder": "This member's role/function within the team",
+    "memberDescribeHint": "Required when Team is set. Auto-injected into system_prompt (with teammates' roster) at startup. Requires restart.",
+    "memberDescribeRequired": "A team member requires a member description.",
+    "previewSystemPrompt": "Preview composed system prompt",
+    "previewSystemPromptTitle": "Composed system prompt",
+    "previewSystemPromptHint": "This is what the agent will receive at startup: your system prompt plus the auto-injected team roster (unsaved edits included).",
+    "previewEmpty": "(empty)"
   },
   "sessions": {
     "title": "Sessions",

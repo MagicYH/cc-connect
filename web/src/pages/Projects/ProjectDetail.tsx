@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Plug, Heart, Settings, Layers, Zap, Pause, Play,
-  Trash2, Plus, Check, Clock, ExternalLink, Link2,
+  Trash2, Plus, Check, Clock, ExternalLink, Link2, Eye,
 } from 'lucide-react';
 import { Card, Badge, Button, Input, Modal, EmptyState } from '@/components/ui';
-import { getProject, updateProject, deleteProject, listAgentTypes, type ProjectDetail as ProjectDetailType } from '@/api/projects';
+import { getProject, updateProject, deleteProject, listAgentTypes, previewSystemPrompt, type ProjectDetail as ProjectDetailType } from '@/api/projects';
 import { listProviders, addProvider, removeProvider, activateProvider, type Provider, listGlobalProviders, type GlobalProvider, saveProviderRefs } from '@/api/providers';
 import { getHeartbeat, pauseHeartbeat, resumeHeartbeat, triggerHeartbeat, setHeartbeatInterval, type HeartbeatStatus } from '@/api/heartbeat';
 import { restartSystem } from '@/api/status';
@@ -63,7 +63,15 @@ export default function ProjectDetail() {
   const [workspaceMode, setWorkspaceMode] = useState('');
   const [baseDir, setBaseDir] = useState('');
   const [subscriptionsEnabled, setSubscriptionsEnabled] = useState(false);
-  const [initial, setInitial] = useState({ systemPrompt: '', workspaceMode: '', baseDir: '', subscriptionsEnabled: false });
+  const [team, setTeam] = useState('');
+  const [memberDescribe, setMemberDescribe] = useState('');
+  const [initial, setInitial] = useState({ systemPrompt: '', workspaceMode: '', baseDir: '', subscriptionsEnabled: false, team: '', memberDescribe: '' });
+
+  // System prompt preview (base + auto-injected team roster)
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewText, setPreviewText] = useState('');
+  const [previewError, setPreviewError] = useState('');
 
   // Agent type
   const [agentTypes, setAgentTypes] = useState<string[]>([]);
@@ -153,11 +161,15 @@ export default function ProjectDetail() {
         const wm = proj.value.workspace_mode || '';
         const bd = proj.value.base_dir || '';
         const subs = proj.value.subscriptions_enabled === true;
+        const tm = proj.value.team || '';
+        const md = proj.value.member_describe || '';
         setSystemPrompt(sp);
         setWorkspaceMode(wm);
         setBaseDir(bd);
         setSubscriptionsEnabled(subs);
-        setInitial({ systemPrompt: sp, workspaceMode: wm, baseDir: bd, subscriptionsEnabled: subs });
+        setTeam(tm);
+        setMemberDescribe(md);
+        setInitial({ systemPrompt: sp, workspaceMode: wm, baseDir: bd, subscriptionsEnabled: subs, team: tm, memberDescribe: md });
         setProviderRefs(proj.value.provider_refs || []);
         const afMap: Record<string, string> = {};
         proj.value.platform_configs?.forEach(pc => {
@@ -197,6 +209,10 @@ export default function ProjectDetail() {
       alert(t('projects.baseDirRequired', 'Multi-workspace mode requires a base directory.'));
       return;
     }
+    if (team.trim() && !memberDescribe.trim()) {
+      alert(t('projects.memberDescribeRequired', 'A team member requires a member description.'));
+      return;
+    }
     setSaving(true);
     try {
       const agentTypeChanged = project && selectedAgentType !== project.agent_type;
@@ -220,6 +236,8 @@ export default function ProjectDetail() {
         ...(workspaceMode !== initial.workspaceMode ? { workspace_mode: workspaceMode } : {}),
         ...(baseDir !== initial.baseDir ? { base_dir: baseDir } : {}),
         ...(subscriptionsEnabled !== initial.subscriptionsEnabled ? { subscriptions_enabled: subscriptionsEnabled } : {}),
+        ...(team !== initial.team ? { team } : {}),
+        ...(memberDescribe !== initial.memberDescribe ? { member_describe: memberDescribe } : {}),
       });
       if (res && (res as any).restart_required) {
         setShowRestartModal(true);
@@ -230,6 +248,26 @@ export default function ProjectDetail() {
       alert(e?.message || String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePreviewSystemPrompt = async () => {
+    if (!name) return;
+    setShowPreview(true);
+    setPreviewLoading(true);
+    setPreviewError('');
+    setPreviewText('');
+    try {
+      const res = await previewSystemPrompt(name, {
+        system_prompt: systemPrompt,
+        team,
+        member_describe: memberDescribe,
+      });
+      setPreviewText(res.composed);
+    } catch (e: any) {
+      setPreviewError(e?.message || String(e));
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -593,7 +631,35 @@ export default function ProjectDetail() {
                 className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
               />
               <p className="text-[11px] text-gray-400 mt-1">{t('projects.systemPromptHint', 'Sent to the agent as its system prompt. Requires restart.')}</p>
+              <button
+                type="button"
+                onClick={handlePreviewSystemPrompt}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+              >
+                <Eye size={13} /> {t('projects.previewSystemPrompt', 'Preview composed system prompt')}
+              </button>
             </div>
+            <Input
+              label={t('projects.team', 'Team')}
+              value={team}
+              onChange={(e) => setTeam(e.target.value)}
+              placeholder={t('projects.teamPlaceholder', 'Team name (empty = no team)')}
+            />
+            {team.trim() && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  {t('projects.memberDescribe', 'Member description')}
+                </label>
+                <textarea
+                  value={memberDescribe}
+                  onChange={(e) => setMemberDescribe(e.target.value)}
+                  rows={3}
+                  placeholder={t('projects.memberDescribePlaceholder', "This member's role/function within the team")}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">{t('projects.memberDescribeHint', 'Required when Team is set. Auto-injected into system_prompt (with teammates’ roster) at startup. Requires restart.')}</p>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -773,6 +839,25 @@ export default function ProjectDetail() {
             <Button variant="secondary" onClick={() => setAddPlatType('')}>{t('common.back')}</Button>
           </div>
         )}
+      </Modal>
+
+      {/* System prompt preview */}
+      <Modal open={showPreview} onClose={() => setShowPreview(false)} title={t('projects.previewSystemPromptTitle', 'Composed system prompt')}>
+        <div className="space-y-3">
+          <p className="text-[11px] text-gray-400">
+            {t('projects.previewSystemPromptHint', 'This is what the agent will receive at startup: your system prompt plus the auto-injected team roster (unsaved edits included).')}
+          </p>
+          {previewLoading ? (
+            <p className="text-sm text-gray-400 animate-pulse">{t('common.loading', 'Loading...')}</p>
+          ) : previewError ? (
+            <p className="text-sm text-red-500">{previewError}</p>
+          ) : (
+            <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-xs bg-gray-50 dark:bg-gray-900 rounded-lg p-3 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700">{previewText || t('projects.previewEmpty', '(empty)')}</pre>
+          )}
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={() => setShowPreview(false)}>{t('common.close', 'Close')}</Button>
+          </div>
+        </div>
       </Modal>
 
       {/* Restart Required Modal */}

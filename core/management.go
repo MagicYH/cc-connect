@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -36,6 +37,8 @@ type ProjectSettingsUpdate struct {
 	WorkspaceMode        *string
 	BaseDir              *string
 	SubscriptionsEnabled *bool
+	Team                 *string
+	MemberDescribe       *string
 }
 
 // ManagementServer provides an HTTP REST API for external management tools
@@ -55,6 +58,7 @@ type ManagementServer struct {
 	heartbeatScheduler  *HeartbeatScheduler
 	bridgeServer        *BridgeServer
 	subscriptionManager *SubscriptionManager
+	teamRegistry        *TeamRegistry
 
 	setupFeishuSave      func(req FeishuSetupSaveRequest) error
 	setupWeixinSave      func(req WeixinSetupSaveRequest) error
@@ -130,6 +134,12 @@ func (m *ManagementServer) SetSaveProjectSettings(fn func(string, ProjectSetting
 
 func (m *ManagementServer) SetGetProjectConfig(fn func(string) map[string]any) {
 	m.getProjectConfig = fn
+}
+
+// SetTeamRegistry provides the resolved team membership used to compose the
+// team-aware system_prompt preview.
+func (m *ManagementServer) SetTeamRegistry(r *TeamRegistry) {
+	m.teamRegistry = r
 }
 
 func (m *ManagementServer) SetSaveProviderRefs(fn func(string, []string) error) {
@@ -626,6 +636,13 @@ func (m *ManagementServer) handleProjectRoutes(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// system-prompt-preview composes from config + team registry only; it does
+	// not require a running engine.
+	if sub == "system-prompt-preview" {
+		m.handleProjectSystemPromptPreview(w, r, projName)
+		return
+	}
+
 	m.mu.RLock()
 	engine, ok := m.engines[projName]
 	m.mu.RUnlock()
@@ -747,6 +764,8 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			WorkspaceMode        *string           `json:"workspace_mode"`
 			BaseDir              *string           `json:"base_dir"`
 			SubscriptionsEnabled *bool             `json:"subscriptions_enabled"`
+			Team                 *string           `json:"team"`
+			MemberDescribe       *string           `json:"member_describe"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -799,7 +818,7 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 		restartRequired := false
 		// These fields are only consumed at engine startup, so a restart is
 		// required for the change to take effect.
-		if body.SystemPrompt != nil || body.WorkspaceMode != nil || body.BaseDir != nil || body.SubscriptionsEnabled != nil {
+		if body.SystemPrompt != nil || body.WorkspaceMode != nil || body.BaseDir != nil || body.SubscriptionsEnabled != nil || body.Team != nil || body.MemberDescribe != nil {
 			restartRequired = true
 		}
 		if body.AgentType != nil && *body.AgentType != e.agent.Name() {
@@ -835,6 +854,8 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 				WorkspaceMode:        body.WorkspaceMode,
 				BaseDir:              body.BaseDir,
 				SubscriptionsEnabled: body.SubscriptionsEnabled,
+				Team:                 body.Team,
+				MemberDescribe:       body.MemberDescribe,
 			}
 			if err := m.saveProjectSettings(name, patch); err != nil {
 				slog.Warn("management: failed to persist project settings", "project", name, "error", err)
@@ -868,6 +889,54 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 	}
 
 	mgmtError(w, http.StatusMethodNotAllowed, "GET, PATCH or DELETE only")
+}
+
+// handleProjectSystemPromptPreview returns the base system_prompt and the
+// composed prompt with the auto-injected team roster. It defaults to the
+// persisted config values, and accepts optional overrides (system_prompt / team
+// / member_describe) via POST body so the WebUI can preview unsaved edits.
+func (m *ManagementServer) handleProjectSystemPromptPreview(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		mgmtError(w, http.StatusMethodNotAllowed, "GET or POST only")
+		return
+	}
+
+	var base, team, memberDescribe string
+	if m.getProjectConfig != nil {
+		if cfg := m.getProjectConfig(name); cfg != nil {
+			base, _ = cfg["system_prompt"].(string)
+			team, _ = cfg["team"].(string)
+			memberDescribe, _ = cfg["member_describe"].(string)
+		}
+	}
+
+	if r.Method == http.MethodPost {
+		var body struct {
+			SystemPrompt   *string `json:"system_prompt"`
+			Team           *string `json:"team"`
+			MemberDescribe *string `json:"member_describe"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if body.SystemPrompt != nil {
+			base = *body.SystemPrompt
+		}
+		if body.Team != nil {
+			team = *body.Team
+		}
+		if body.MemberDescribe != nil {
+			memberDescribe = *body.MemberDescribe
+		}
+	}
+
+	composed := m.teamRegistry.Compose(name, team, memberDescribe, base)
+	mgmtJSON(w, http.StatusOK, map[string]any{
+		"base":     base,
+		"team":     team,
+		"composed": composed,
+	})
 }
 
 // ── Users endpoints ──────────────────────────────────────────
