@@ -3439,8 +3439,12 @@ func findSingleAsterisk(s string) int {
 }
 
 // fetchBotInfo retrieves the bot's open_id and display name via the Feishu bot info API.
+// A bounded timeout keeps startup (which now resolves team bot identities up
+// front) from stalling on a slow or hung endpoint.
 func (p *Platform) fetchBotInfo() (openID, botName string, err error) {
-	resp, err := p.client.Get(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := p.client.Get(ctx,
 		"/open-apis/bot/v3/info", nil, larkcore.AccessTokenTypeTenant)
 	if err != nil {
 		return "", "", fmt.Errorf("api call: %w", err)
