@@ -19,6 +19,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-block.sh <rid> <nonce> <原因>` | fenced 置阻塞（错派/卡住） | `BLOCKED` |
 | `scripts/board-new-task.sh <主任务> <工作群> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
+| `scripts/board-init-project.sh <项目名> <需求> [目录]` | **Boss/TL 专用**：开新项目一条命令完成 建群+拉人+项目行+workspace绑定+@TL 起步 | `PROJECT_READY <chat_id>` |
 
 ## 工作循环（每次被唤醒）
 
