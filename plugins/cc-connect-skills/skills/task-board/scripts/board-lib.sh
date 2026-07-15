@@ -7,13 +7,19 @@ BOARD_ENV="${BOARD_ENV:-$HOME/.cc-connect/board.env}"
 : "${BOARD_BASE:?BOARD_BASE not set (write ~/.cc-connect/board.env or export it)}"
 : "${TBL_TASKS:?TBL_TASKS not set}"
 ROLE="${CC_PROJECT:?CC_PROJECT not set (must run inside a cc-connect agent session)}"
+# 角色显示名（含 Bot 名，如 team-leader(Beta)）：board.env 里配 BOT_LABEL_<role下划线>；未配则等于 ROLE
+_lv="BOT_LABEL_${ROLE//-/_}"; ROLE_LABEL="${!_lv:-$ROLE}"
+# role_label <角色名> → 该角色的显示名（供 new-task 指派他人时用）
+role_label(){ local v="BOT_LABEL_${1//-/_}"; echo "${!v:-$1}"; }
 NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
 
 # rec_get <record_id>  → JSON 到 stdout
 rec_get(){ lark-cli base +record-get --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$1" --format json --as user; }
 
-# rec_field <record_get_json> <字段名> → 值（select 数组取第一项；空值输出空串）
-rec_field(){ echo "$1" | jq -r --arg f "$2" '(.data.fields | index($f)) as $i | .data.data[0][$i] | if type=="array" then (.[0]//"") elif .==null then "" else . end'; }
+# rec_field <record_get_json> <字段名> → 值（select 数组取第一项；群字段对象取 .name；空值输出空串）
+rec_field(){ echo "$1" | jq -r --arg f "$2" '(.data.fields | index($f)) as $i | .data.data[0][$i] | if type=="array" then (.[0]//"" | if type=="object" then (.name // .id // "") else . end) elif .==null then "" else . end'; }
+# rec_chat <record_get_json> <字段名> → 群 chatID（兼容 Group 字段对象数组与纯文本）
+rec_chat(){ echo "$1" | jq -r --arg f "$2" '(.data.fields | index($f)) as $i | .data.data[0][$i] | if type=="array" then (.[0]//"" | if type=="object" then (.id // "") else . end) elif .==null then "" else . end'; }
 
 # rec_upsert <record_id|-> <fields_json>  —— 写入；1254291 并发冲突时退避重试 3 次
 rec_upsert(){
