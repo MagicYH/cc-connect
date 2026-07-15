@@ -13,7 +13,7 @@ PF='[{"field_name":"主任务名","type":"text"},{"field_name":"项目状态","t
 TBL_PROJECTS=$(lark-cli base +table-create --base-token "$BOARD_BASE" --name Projects --fields "$PF" --as user | jq -r '.data.table.id // empty')
 [ -n "$TBL_PROJECTS" ] || { echo "FATAL: Projects table failed（同名残留？先 +table-delete）" >&2; exit 1; }
 
-TF='[{"field_name":"子任务","type":"text"},{"field_name":"主任务","type":"text"},{"field_name":"工作群","type":"group_chat"},{"field_name":"角色","type":"select","options":[{"name":"team-leader(Beta)"},{"name":"developer(Delta)"},{"name":"tester(Zero)"},{"name":"reviewer(Gamma)"}]},{"field_name":"状态","type":"select","options":[{"name":"待办"},{"name":"进行中"},{"name":"完成"},{"name":"阻塞"}]},{"field_name":"认领人","type":"text"},{"field_name":"认领令牌","type":"text"},{"field_name":"认领时间","type":"datetime"},{"field_name":"心跳时间","type":"datetime"},{"field_name":"来源任务","type":"text"},{"field_name":"创建人","type":"text"},{"field_name":"产出备注","type":"text"},{"field_name":"创建时间","type":"created_at"},{"field_name":"完成时间","type":"datetime"}]'
+TF='[{"field_name":"子任务","type":"text"},{"field_name":"主任务","type":"text"},{"field_name":"工作群","type":"group_chat"},{"field_name":"角色","type":"select","options":[{"name":"Beta (team-leader)"},{"name":"Delta (developer)"},{"name":"Zero (tester)"},{"name":"Gamma (reviewer)"}]},{"field_name":"状态","type":"select","options":[{"name":"待办"},{"name":"进行中"},{"name":"完成"},{"name":"阻塞"}]},{"field_name":"认领人","type":"text"},{"field_name":"认领令牌","type":"text"},{"field_name":"认领时间","type":"datetime"},{"field_name":"心跳时间","type":"datetime"},{"field_name":"来源任务","type":"text"},{"field_name":"创建人","type":"text"},{"field_name":"产出备注","type":"text"},{"field_name":"创建时间","type":"created_at"},{"field_name":"完成时间","type":"datetime"}]'
 TBL_TASKS=$(lark-cli base +table-create --base-token "$BOARD_BASE" --name Tasks --fields "$TF" --as user | jq -r '.data.table.id // empty')
 [ -n "$TBL_TASKS" ] || { echo "FATAL: Tasks table failed" >&2; exit 1; }
 
@@ -23,10 +23,10 @@ BOARD_BASE=$BOARD_BASE
 TBL_PROJECTS=$TBL_PROJECTS
 TBL_TASKS=$TBL_TASKS
 # 角色显示名映射（改成你实际的 Bot 飞书应用名；脚本据此写「角色/认领人」字段）
-BOT_LABEL_team_leader="team-leader(Beta)"
-BOT_LABEL_developer="developer(Delta)"
-BOT_LABEL_tester="tester(Zero)"
-BOT_LABEL_reviewer="reviewer(Gamma)"
+BOT_LABEL_team_leader="Beta (team-leader)"
+BOT_LABEL_developer="Delta (developer)"
+BOT_LABEL_tester="Zero (tester)"
+BOT_LABEL_reviewer="Gamma (reviewer)"
 EOV
 echo "written ~/.cc-connect/board.env:"
 cat ~/.cc-connect/board.env

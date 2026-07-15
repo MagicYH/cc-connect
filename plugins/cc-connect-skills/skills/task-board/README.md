@@ -48,7 +48,7 @@ cc-connect daemon restart
 打开看板 Base → Tasks 表加一行，填五个字段：
 - 主任务 = 项目名（与 Projects 表「主任务名」一致）
 - 工作群 = 点选对应项目群（Group 字段，可点击跳群）
-- 角色 = 选执行者，如 `developer(Delta)`
+- 角色 = 选执行者，如 `Delta (developer)`
 - 子任务 = 具体要做的事（写清验收标准更好）
 - 状态 = `待办`
 
@@ -59,7 +59,7 @@ cc-connect daemon restart
 scripts/board-new-task.sh <主任务> <工作群> <角色> "<子任务>" [来源rid]   # 输出新行 rid
 scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任务>"      # 立即唤醒
 ```
-角色传纯名（如 `tester`）即可，脚本自动映射为 `tester(Zero)` 标签。
+角色传纯名（如 `tester`）即可，脚本自动映射为 `Zero (tester)` 标签。
 
 **方式三：让 team-leader 拆解**（只有需求、没想好任务时）
 在项目群 @team-leader 描述需求，它会按协议拆出首个可开工子任务并派发。

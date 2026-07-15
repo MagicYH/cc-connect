@@ -12,7 +12,7 @@ list_rows | jq -r --arg role "$ROLE" --arg cutoff "$CUTOFF" '
   | .[] | .rid as $rid | .row as $r
   | def fv(name): ($f | index(name)) as $i | $r[$i] | if type=="array" then (.[0]//"" | if type=="object" then (.name // .id // "") else . end) elif .==null then "" else . end;
   def fchat: ($f | index("工作群")) as $i | $r[$i] | if type=="array" then (.[0]//"" | if type=="object" then (.id // "") else . end) elif .==null then "" else . end;
-  select(fv("角色")==$role or (fv("角色") | startswith($role+"(")))
+  select(fv("角色")==$role or (fv("角色") | contains("("+$role+")")))
   | if fv("状态")=="待办" then [$rid,"TODO",fv("子任务"),fv("主任务"),fchat]
     elif fv("状态")=="进行中" and fv("心跳时间") != "" and fv("心跳时间") < $cutoff then [$rid,"RECLAIM",fv("子任务"),fv("主任务"),fchat]
     else empty end

@@ -7,7 +7,7 @@ BOARD_ENV="${BOARD_ENV:-$HOME/.cc-connect/board.env}"
 : "${BOARD_BASE:?BOARD_BASE not set (write ~/.cc-connect/board.env or export it)}"
 : "${TBL_TASKS:?TBL_TASKS not set}"
 ROLE="${CC_PROJECT:?CC_PROJECT not set (must run inside a cc-connect agent session)}"
-# 角色显示名（含 Bot 名，如 team-leader(Beta)）：board.env 里配 BOT_LABEL_<role下划线>；未配则等于 ROLE
+# 角色显示名（含 Bot 名，如 Beta (team-leader)）：board.env 里配 BOT_LABEL_<role下划线>；未配则等于 ROLE
 _lv="BOT_LABEL_${ROLE//-/_}"; ROLE_LABEL="${!_lv:-$ROLE}"
 # role_label <角色名> → 该角色的显示名（供 new-task 指派他人时用）
 role_label(){ local v="BOT_LABEL_${1//-/_}"; echo "${!v:-$1}"; }
