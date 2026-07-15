@@ -54,3 +54,5 @@
 - [WebSocket Platforms](./websocket-platforms.md)
 
 ## Subdirectories
+
+- [multi-agent-collaboration](./multi-agent-collaboration/INDEX.md) — 多 bot 自主协作机制与实战教训（唤醒/锁/兜底/身份/绑定）
