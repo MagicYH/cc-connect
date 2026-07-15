@@ -7,6 +7,6 @@
 - `docs/superpowers/specs/2026-07-13-agent-work-board-verification.md` — 9 Scenario 验证计划 + 执行结果
 - `docs/superpowers/specs/2026-07-13-agent-work-board-deployment.md` — 部署计划
 - `board/protocol/{common,boss,team-leader}.md` — 注入 bot 的看板协议
-- `board/scripts/board-send.sh` — 自有 app 身份发消息脚本
+- `board/scripts/board-send.sh` — 自有 app 身份发消息脚本（已收录进本仓库 `scripts/board-send.sh`，以本仓库版本为准）
 
 对本代码库的核实结论（file:line 均已实测/复核）：relay 同步阻塞语义、per-session 并发模型、mention 过滤、cron session-key 强制、workspace 本地路径开关、Management API system_prompt PATCH。

@@ -36,6 +36,6 @@ S1 建表 / S2 令牌锁真并发 / S3 Post@ 唤醒 / S3b Card@ 负例 / S4 cron
 
 ## 产物位置
 
-设计/验证/部署/计划四份文档与协议产物在 `agent-work-board` 仓库（`docs/superpowers/specs/2026-07-13-agent-work-board-*.md`、`board/`）；看板 Base `JYZqbSKrTasFK2sN6OamX5rByZb`；bot 配置在 dev-sg `~/.cc-connect/config.toml`。
+设计/验证/部署/计划四份文档与协议产物在 `agent-work-board` 仓库（`docs/superpowers/specs/2026-07-13-agent-work-board-*.md`、`board/`）；看板 Base `JYZqbSKrTasFK2sN6OamX5rByZb`；bot 配置在 dev-sg `~/.cc-connect/config.toml`；board-send 脚本已收录进本仓库 `scripts/board-send.sh`。
 
 Cross-references: [Feishu Mention + Slash Command Failure](feishu-mention-slash-cmd.md), [Engine](../concepts/engine.md), [CronScheduler](../concepts/cron-scheduler.md)
