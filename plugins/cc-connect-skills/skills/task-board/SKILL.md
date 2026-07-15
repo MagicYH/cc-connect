@@ -46,5 +46,6 @@ description: Use when this bot works on the shared bitable task board (任务看
 | 读后立刻查状态不对 | bitable 读后写有秒级延迟；脚本已内置抖动回读，勿在脚本外自行读写判断 |
 | `FENCED` | 任务已被回收/接管，你的令牌失效——静默放弃，不写任何字段不发消息 |
 | 发消息报 230002 | 你不在那个群；检查 chatID 是否取自任务行的「群chatID」字段 |
+| 同一任务被建了两条 | 建行后**勿回查复核勿重试**——脚本输出 rid 即成功；读后写延迟会让复核看不到刚建的行 |
 
 管理员部署（建表/注入协议/配 cron/新项目初始化）见 [admin-setup.md](admin-setup.md)。
