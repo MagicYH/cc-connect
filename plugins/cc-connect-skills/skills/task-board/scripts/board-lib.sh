@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# board-lib.sh —— task-board 脚本共享库。被其它 board-*.sh source，不直接执行。
+# 配置来源（优先级）：环境变量 BOARD_BASE/TBL_TASKS/TBL_PROJECTS > ~/.cc-connect/board.env
+set -euo pipefail
+BOARD_ENV="${BOARD_ENV:-$HOME/.cc-connect/board.env}"
+[ -f "$BOARD_ENV" ] && source "$BOARD_ENV"
+: "${BOARD_BASE:?BOARD_BASE not set (write ~/.cc-connect/board.env or export it)}"
+: "${TBL_TASKS:?TBL_TASKS not set}"
+ROLE="${CC_PROJECT:?CC_PROJECT not set (must run inside a cc-connect agent session)}"
+NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
+
+# rec_get <record_id>  → JSON 到 stdout
+rec_get(){ lark-cli base +record-get --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$1" --format json --as user; }
+
+# rec_field <record_get_json> <字段名> → 值（select 数组取第一项；空值输出空串）
+rec_field(){ echo "$1" | jq -r --arg f "$2" '(.data.fields | index($f)) as $i | .data.data[0][$i] | if type=="array" then (.[0]//"") elif .==null then "" else . end'; }
+
+# rec_upsert <record_id|-> <fields_json>  —— 写入；1254291 并发冲突时退避重试 3 次
+rec_upsert(){
+  local rid="$1" json="$2" i out
+  for i in 1 2 3; do
+    if [ "$rid" = "-" ]; then
+      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --json "$json" --as user 2>&1) && { echo "$out"; return 0; }
+    else
+      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$rid" --json "$json" --as user 2>&1) && { echo "$out"; return 0; }
+    fi
+    echo "$out" | grep -q 1254291 || { echo "$out" >&2; return 1; }
+    sleep 0.$((RANDOM%9+1))
+  done
+  echo "UPSERT_RETRY_EXHAUSTED" >&2; return 1
+}
+
+# list_rows → 全表 JSON（含 .data.fields 与 .data.data[] 与 .data.record_id_list[]）
+list_rows(){ lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --format json --as user; }
