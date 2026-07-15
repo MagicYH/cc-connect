@@ -11,13 +11,13 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 | 脚本 | 用途 | 关键输出 |
 |---|---|---|
-| `scripts/board-my-todos.sh` | 列我的待办 + 可回收的超时进行中 | TSV: rid 类别 子任务 主任务 群chatID |
+| `scripts/board-my-todos.sh` | 列我的待办 + 可回收的超时进行中 | TSV: rid 类别 子任务 主任务 工作群 |
 | `scripts/board-claim.sh <rid>` | 令牌锁认领（含抖动+回读校验） | `CLAIMED <nonce>`；失败 exit 1 |
 | `scripts/board-reclaim.sh <rid>` | 回收心跳超时的进行中 | `RECLAIMED <nonce>`；未超时拒绝 |
 | `scripts/board-heartbeat.sh <rid> <nonce>` | fenced 心跳（干活期间≥每10分钟） | `FENCED`=已被接管，立即放弃 |
 | `scripts/board-done.sh <rid> <nonce> <产出>` | fenced 置完成+产出+完成时间 | `DONE` |
 | `scripts/board-block.sh <rid> <nonce> <原因>` | fenced 置阻塞（错派/卡住） | `BLOCKED` |
-| `scripts/board-new-task.sh <主任务> <群chatID> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
+| `scripts/board-new-task.sh <主任务> <工作群> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
 
 ## 工作循环（每次被唤醒）
@@ -28,7 +28,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
 5. 完成 → `board-done.sh` 写清产出。
 6. **派发下一步（最容易漏的一步，完成后必须自问：有后继吗？）**
-   - 有后继 → `board-new-task.sh` 建行 + `board-send.sh <群chatID> <对方open_id> "看板有新任务：<子任务>"`（open_id 见系统注入的团队花名册）。
+   - 有后继 → `board-new-task.sh` 建行 + `board-send.sh <工作群> <对方open_id> "看板有新任务：<子任务>"`（open_id 见系统注入的团队花名册）。
    - 无后继且该主任务已无 待办/进行中 → 建「收尾验收」行给 team-leader 并 @ 它。
 7. 回到 1，直到没有我的活。
 
@@ -45,7 +45,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | 完成了却没人接棒 | 漏了循环第 6 步——完成后必须显式派发或建收尾行 |
 | 读后立刻查状态不对 | bitable 读后写有秒级延迟；脚本已内置抖动回读，勿在脚本外自行读写判断 |
 | `FENCED` | 任务已被回收/接管，你的令牌失效——静默放弃，不写任何字段不发消息 |
-| 发消息报 230002 | 你不在那个群；检查 chatID 是否取自任务行的「群chatID」字段 |
+| 发消息报 230002 | 你不在那个群；检查 chatID 是否取自任务行的「工作群」字段 |
 | 同一任务被建了两条 | 建行后**勿回查复核勿重试**——脚本输出 rid 即成功；读后写延迟会让复核看不到刚建的行 |
 
 管理员部署（建表/注入协议/配 cron/新项目初始化）见 [admin-setup.md](admin-setup.md)。

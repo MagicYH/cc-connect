@@ -27,7 +27,7 @@ cd plugins/cc-connect-skills/skills/task-board/scripts
 cc-connect daemon restart
 
 # 3) 注册自查 cron（锚点群须 workspace 干净、非生产群）
-./board-setup-cron.sh feishu:oc_你的锚点群chatID
+./board-setup-cron.sh feishu:oc_你的锚点工作群
 
 # 4) 编辑 ~/.cc-connect/board.env 里的 BOT_LABEL_* 为你实际的 Bot 应用名
 #    （决定「角色/认领人」显示为 role(Bot名)，且需与看板「角色」select 选项一致）
@@ -39,7 +39,7 @@ cc-connect daemon restart
 
 1. 建项目群、拉齐角色 bot；
 2. **逐个 @ 每个 bot** 发 `/workspace init <工作目录绝对路径>`（漏了 bot 不干活）；
-3. 写 Projects 行（主任务名/群chatID/状态=进行中）；
+3. 写 Projects 行（主任务名/工作群/状态=进行中）；
 4. 在群里 @team-leader 起步。
 
 ## 创建新任务（三种方式）
@@ -47,7 +47,7 @@ cc-connect daemon restart
 **方式一：人在看板 UI 直接加行**（最直观）
 打开看板 Base → Tasks 表加一行，填五个字段：
 - 主任务 = 项目名（与 Projects 表「主任务名」一致）
-- 群chatID = 点选对应项目群（Group 字段，可点击跳群）
+- 工作群 = 点选对应项目群（Group 字段，可点击跳群）
 - 角色 = 选执行者，如 `developer(Delta)`
 - 子任务 = 具体要做的事（写清验收标准更好）
 - 状态 = `待办`
@@ -56,8 +56,8 @@ cc-connect daemon restart
 
 **方式二：bot 在会话里建**（bot 间接力派发即此路径）
 ```bash
-scripts/board-new-task.sh <主任务> <群chatID> <角色> "<子任务>" [来源rid]   # 输出新行 rid
-scripts/board-send.sh <群chatID> <对方open_id> "看板有新任务：<子任务>"      # 立即唤醒
+scripts/board-new-task.sh <主任务> <工作群> <角色> "<子任务>" [来源rid]   # 输出新行 rid
+scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任务>"      # 立即唤醒
 ```
 角色传纯名（如 `tester`）即可，脚本自动映射为 `tester(Zero)` 标签。
 
@@ -68,7 +68,7 @@ scripts/board-send.sh <群chatID> <对方open_id> "看板有新任务：<子任�
 
 - **人工触发**：群里 @ 某 bot 说"检查看板"；
 - **兜底**：cron 每 30 分钟自动扫（漏派的待办、心跳超时的进行中都会被捞起）；
-- **看历史**：打开看板 Base，按「主任务」筛选即该项目全部任务与状态流转；「群chatID」为 Group 字段，点击可直接跳转项目群。
+- **看历史**：打开看板 Base，按「主任务」筛选即该项目全部任务与状态流转；「工作群」为 Group 字段，点击可直接跳转项目群。
 
 ## 常见问题
 
