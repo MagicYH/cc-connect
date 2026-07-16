@@ -22,47 +22,36 @@ done
 : "${BOARD_WRITER_OPENID:?board.env 缺 BOARD_WRITER_OPENID}"
 WORKDIR="${3:-${PROJECTS_BASE_DIR:?board.env 缺 PROJECTS_BASE_DIR}/$NAME}"
 
-config_value(){ python3 - "$CONFIG_FILE" "$1" "$2" <<'PYEOF'
-import re, sys
-cfg, project, field = sys.argv[1:]
-text = open(cfg, encoding="utf-8").read()
-blocks = re.split(r'(?m)^\s*\[\[projects\]\]\s*$', text)[1:]
-for b in blocks:
-    m = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', b)
-    if not m or m.group(1) != project:
-        continue
-    platform_blocks = re.split(r'(?m)^\s*\[\[projects\.platforms\]\]\s*$', b)[1:]
-    if not platform_blocks:
-        break
-    platform = platform_blocks[0]
-    if field == "platform":
-        pm = re.search(r'(?m)^\s*type\s*=\s*"([^"]+)"', platform)
-        if pm:
-            print(pm.group(1))
-    else:
-        fm = re.search(r'(?m)^\s*' + re.escape(field) + r'\s*=\s*"([^"]+)"', platform)
-        if fm:
-            print(fm.group(1))
-    break
-PYEOF
-}
-
-top_config_value(){ python3 - "$CONFIG_FILE" "$1" <<'PYEOF'
-import re, sys
-cfg, field = sys.argv[1:]
-text = open(cfg, encoding="utf-8").read()
+CFG_VALUES=()
+while IFS= read -r __cfg_line; do CFG_VALUES+=("$__cfg_line"); done < <(python3 - "$CONFIG_FILE" "$ROLE" <<'PYEOF'
+import os, re, sys
+cfg, project = sys.argv[1:]
+try:
+    text = open(cfg, encoding="utf-8").read()
+except FileNotFoundError:
+    text = ""
 top = re.split(r'(?m)^\s*\[\[projects\]\]\s*$', text, maxsplit=1)[0]
-m = re.search(r'(?m)^\s*' + re.escape(field) + r'\s*=\s*"([^"]*)"', top)
-if m:
-    print(m.group(1))
+dm = re.search(r'(?m)^\s*data_dir\s*=\s*"([^"]*)"', top)
+data_dir = os.path.expanduser(os.path.expandvars(dm.group(1))) if dm else ""
+app_id = ""
+for b in re.split(r'(?m)^\s*\[\[projects\]\]\s*$', text)[1:]:
+    m = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', b)
+    if m and m.group(1) == project:
+        am = re.search(r'(?m)^\s*app_id\s*=\s*"([^"]+)"', b)
+        app_id = am.group(1) if am else ""
+        break
+print(app_id)
+print(data_dir)
 PYEOF
-}
+)
+CALLER_APPID_CONFIG="${CFG_VALUES[0]:-}"
+CFG_DATA_DIR="${CFG_VALUES[1]:-}"
 
 # 1) 建群：角色 bot + 调用者自己的 bot app（否则后续 board-send 报 230002 不在群）+ 看板写入者(+发起人)
 APPIDS="$BOT_APPID_team_leader,$BOT_APPID_developer,$BOT_APPID_tester,$BOT_APPID_reviewer"
 CALLER_APPID_VAR="BOT_APPID_${ROLE//-/_}"
 CALLER_APPID="${!CALLER_APPID_VAR:-}"
-[ -n "$CALLER_APPID" ] || CALLER_APPID="$(config_value "$ROLE" app_id)"
+[ -n "$CALLER_APPID" ] || CALLER_APPID="$CALLER_APPID_CONFIG"
 if [ -n "$CALLER_APPID" ] && [[ ",$APPIDS," != *",$CALLER_APPID,"* ]]; then APPIDS="$APPIDS,$CALLER_APPID"; fi
 USERS="$BOARD_WRITER_OPENID"
 [ -n "${INITIATOR_OPENID:-}" ] && [ "$INITIATOR_OPENID" != "$BOARD_WRITER_OPENID" ] && USERS="$USERS,$INITIATOR_OPENID"
@@ -90,25 +79,23 @@ echo "workdir=$WORKDIR"
 
 # 4) 逐个 @bot 绑定 workspace（board-send 以 CC_PROJECT 身份发；bot 处理需数秒）
 SEND="$(dirname "$0")/board-send.sh"
+WORKDIR_ARG="'${WORKDIR//\'/\'\\\'\'}'"
 for r in "${ROLES[@]}"; do
   ov="BOT_OPENID_$r"
-  "$SEND" "$CHAT" "${!ov}" "/workspace init '$WORKDIR'" >/dev/null
+  "$SEND" "$CHAT" "${!ov}" "/workspace init $WORKDIR_ARG" >/dev/null
   sleep 2
 done
 
 # 5) 轮询绑定生效（workspace_bindings.json，最多 150s）
-DATA_DIR="$(top_config_value data_dir)"
+DATA_DIR="$CFG_DATA_DIR"
 [ -n "$DATA_DIR" ] || DATA_DIR="$HOME/.cc-connect"
 WB="$DATA_DIR/workspace_bindings.json"
-PLATFORM="$(config_value "$ROLE" platform)"
-[ -n "$PLATFORM" ] || PLATFORM="feishu"
-CHANNEL_KEY="$PLATFORM:$CHAT"
 for i in $(seq 1 30); do
-  N=$(jq --arg c "$CHANNEL_KEY" --arg w "$WORKDIR" '
+  N=$(jq --arg c "feishu:$CHAT" --arg lc "lark:$CHAT" --arg w "$WORKDIR" '
     . as $root
     | ["team-leader","developer","tester","reviewer"]
     | map("project:" + .)
-    | map(select(($root[.][$c].workspace // "") == $w))
+    | map(select((($root[.][$c].workspace // "") == $w) or (($root[.][$lc].workspace // "") == $w)))
     | length
   ' "$WB" 2>/dev/null || echo 0)
   [ "$N" -ge "$ROLE_COUNT" ] && break
@@ -120,7 +107,6 @@ if [ "${N:-0}" -lt "$ROLE_COUNT" ]; then
   exit 1
 fi
 
-trap - ERR
 # 6) 置进行中
 lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_PROJECTS" --record-id "$PRID" \
   --json '{"项目状态":"进行中"}' --as user >/dev/null
