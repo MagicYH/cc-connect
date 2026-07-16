@@ -13,8 +13,12 @@ _lv="BOT_LABEL_${ROLE//-/_}"; ROLE_LABEL="${!_lv:-$ROLE}"
 role_label(){ local v="BOT_LABEL_${1//-/_}"; echo "${!v:-$1}"; }
 NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
 
+# _json —— 剥掉 lark-cli 偶发打在 stdout 前面的非 JSON 横幅（如版本更新提示），
+#          只保留自首个 { 或 [ 起的内容（实测横幅会让下游 jq 报 Invalid numeric literal）
+_json(){ sed -n '/^[[{]/,$p'; }
+
 # rec_get <record_id>  → JSON 到 stdout
-rec_get(){ lark-cli base +record-get --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$1" --format json --as user; }
+rec_get(){ lark-cli base +record-get --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$1" --format json --as user | _json; }
 
 # rec_field <record_get_json> <字段名> → 值（select 数组取第一项；群字段对象取 .name；空值输出空串）
 rec_field(){ echo "$1" | jq -r --arg f "$2" '(.data.fields | index($f)) as $i | .data.data[0][$i] | if type=="array" then (.[0]//"" | if type=="object" then (.name // .id // "") else . end) elif .==null then "" else . end'; }
@@ -26,9 +30,9 @@ rec_upsert(){
   local rid="$1" json="$2" i out
   for i in 1 2 3; do
     if [ "$rid" = "-" ]; then
-      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --json "$json" --as user 2>&1) && { echo "$out"; return 0; }
+      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --json "$json" --as user 2>&1) && { echo "$out" | _json; return 0; }
     else
-      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$rid" --json "$json" --as user 2>&1) && { echo "$out"; return 0; }
+      out=$(lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$rid" --json "$json" --as user 2>&1) && { echo "$out" | _json; return 0; }
     fi
     echo "$out" | grep -q 1254291 || { echo "$out" >&2; return 1; }
     sleep 0.$((RANDOM%9+1))
@@ -37,4 +41,4 @@ rec_upsert(){
 }
 
 # list_rows → 全表 JSON（含 .data.fields 与 .data.data[] 与 .data.record_id_list[]）
-list_rows(){ lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --format json --as user; }
+list_rows(){ lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --format json --as user | _json; }
