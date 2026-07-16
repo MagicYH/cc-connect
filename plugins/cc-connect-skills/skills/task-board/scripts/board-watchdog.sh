@@ -52,23 +52,8 @@ last_role_msg(){
   date -d "$raw" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo ""
 }
 
-# resolve_role <角色字段原值> → 规范角色键(连字符形式，如 team-leader / reviewer)；解析不出输出空。
-# 兼容三种写法：完整 label「Beta (team-leader)」、角色键「team-leader」、以及**裸 bot 名「Gamma」**。
-# 实测踩坑：派单方把「角色」写成裸 bot 名而非角色键 → 旧逻辑 BOT_OPENID_Gamma 为空 → 该行被静默跳过，
-# 一个真卡住的任务对看门狗变成隐形。反向解析兜住这种脏数据；实在解析不出的由调用处打 SKIP_UNRESOLVED。
-KNOWN_ROLES=$(compgen -v | sed -n 's/^BOT_OPENID_//p')   # 从 board.env 的 BOT_OPENID_* 动态推出已知角色
-resolve_role(){
-  local raw="$1" cand r label name
-  case "$raw" in *"("*")"*) cand="${raw##*(}"; cand="${cand%)*}";; *) cand="$raw";; esac
-  local uv="BOT_OPENID_${cand//-/_}"
-  [ -n "${!uv:-}" ] && { echo "${cand//_/-}"; return; }   # 已是角色键（或 label 内层就是角色键）
-  for r in $KNOWN_ROLES; do                               # 否则当裸 bot 名，比对各角色 BOT_LABEL 的前导名/全 label
-    label="BOT_LABEL_${r}"; label="${!label:-}"; [ -n "$label" ] || continue
-    name="${label%% (*}"
-    { [ "$cand" = "$label" ] || [ "$cand" = "$name" ]; } && { echo "${r//_/-}"; return; }
-  done
-  echo ""
-}
+# resolve_role（角色键/裸 bot 名/label → 规范角色键，解析不出为空）来自 board-lib；此处兜住脏「角色」值，
+# 实在解析不出的行由下方 case 打 SKIP_UNRESOLVED（不静默跳过卡死任务）。
 
 # 分隔符用 \x1f（unit separator）而非 TAB：TAB 属 IFS 空白，read 会把连续 TAB 折叠，
 # 空字段（如待办行的心跳/认领时间）会导致后续字段左移（实测催办消息变成「」）。

@@ -9,8 +9,32 @@ BOARD_ENV="${BOARD_ENV:-$HOME/.cc-connect/board.env}"
 ROLE="${CC_PROJECT:?CC_PROJECT not set (must run inside a cc-connect agent session)}"
 # 角色显示名（含 Bot 名，如 Beta (team-leader)）：board.env 里配 BOT_LABEL_<role下划线>；未配则等于 ROLE
 _lv="BOT_LABEL_${ROLE//-/_}"; ROLE_LABEL="${!_lv:-$ROLE}"
-# role_label <角色名> → 该角色的显示名（供 new-task 指派他人时用）
-role_label(){ local v="BOT_LABEL_${1//-/_}"; echo "${!v:-$1}"; }
+
+# resolve_role <角色原值> → 规范角色键(连字符，如 team-leader / reviewer)；无法识别输出空。
+# 兼容三种写法：完整 label「Beta (team-leader)」、角色键「team-leader」、裸 bot 名「Gamma」。
+# 实测坑：派单方（含人类用 @Gamma）拿 bot 显示名当角色 → 旧 role_label 原样透传脏值入库，
+# 派发/watchdog 都路由不到。这里统一归一；写入侧(role_label)据此把脏值挡在门外。
+KNOWN_ROLES=$(compgen -v | sed -n 's/^BOT_OPENID_//p')   # 从 board.env 的 BOT_OPENID_* 动态推已知角色
+resolve_role(){
+  local raw="$1" cand r label name
+  case "$raw" in *"("*")"*) cand="${raw##*(}"; cand="${cand%)*}";; *) cand="$raw";; esac
+  local uv="BOT_OPENID_${cand//-/_}"
+  [ -n "${!uv:-}" ] && { echo "${cand//_/-}"; return; }   # 已是角色键（或 label 内层就是角色键）
+  for r in $KNOWN_ROLES; do                               # 否则当裸 bot 名，比对各角色 BOT_LABEL 前导名/全 label
+    label="BOT_LABEL_${r}"; label="${!label:-}"; [ -n "$label" ] || continue
+    name="${label%% (*}"
+    { [ "$cand" = "$label" ] || [ "$cand" = "$name" ]; } && { echo "${r//_/-}"; return; }
+  done
+  echo ""
+}
+
+# role_label <角色原值> → 规范显示 label（"Beta (team-leader)"），new-task 指派他人写「角色」字段用。
+# **归一化 + 严格**：角色键/裸bot名/label 一律归到规范 label；彻底认不出的报错退出（不再静默透传脏值）。
+role_label(){
+  local rk; rk=$(resolve_role "$1")
+  [ -n "$rk" ] || { echo "ERROR: 无法识别角色「$1」——请用角色键 team-leader/developer/tester/reviewer（不是 Bot 显示名）" >&2; return 3; }
+  local v="BOT_LABEL_${rk//-/_}"; echo "${!v:-$rk}"
+}
 NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
 
 # _json —— 剥掉 lark-cli 偶发打在 stdout 前面的非 JSON 横幅（如 `[lark-cli] [WARN] proxy detected...`

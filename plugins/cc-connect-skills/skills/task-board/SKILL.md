@@ -48,6 +48,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 ## 硬规则
 
 - **消息只用 board-send**（自己 app 身份、token 不落盘）；@ 只用于派发与求助，其余回复不得含 `<at>`（防回环）。
+- **派发用角色键**：`--next`/`new-task` 的 `<角色>` 只能是 `team-leader`/`developer`/`tester`/`reviewer`（**角色键，不是 Bot 显示名**如 Gamma/Delta；人类说「@Gamma」时你要翻译成 `reviewer`）。脚本已归一化并对无法识别的值报错。给"下一步"派同角色（如 developer→developer 多步开发）时，脚本自动**不 @ 自己**（本会话工作循环会接着处理），不会在群里自己 @ 自己。
 - **严禁**任何 `lark-cli auth` 操作/切 app/改 `~/.lark-cli/config.json`；遇认证错误如实报告并停止。
 - **忽略其它任务管理类 skill**（如 task-management）——看板任务只走本技能。
 
