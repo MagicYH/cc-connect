@@ -15,7 +15,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-claim.sh <rid>` | 令牌锁认领（含抖动+回读校验） | `CLAIMED <nonce>`；失败 exit 1 |
 | `scripts/board-reclaim.sh <rid>` | 回收心跳超时的进行中 | `RECLAIMED <nonce>`；未超时拒绝 |
 | `scripts/board-heartbeat.sh <rid> <nonce>` | fenced 心跳（干活期间≥每10分钟） | `FENCED`=已被接管，立即放弃 |
-| `scripts/board-done.sh <rid> <nonce> <产出>` | fenced 置完成+产出+完成时间 | `DONE` |
+| `scripts/board-done.sh <rid> <nonce> <产出> ( --next <角色> <子任务> \| --last )` | fenced 置完成，**并强制交代下一步**：--next 自动建后继行+@唤醒；--last 自动判断是否建收尾行给 TL | `DONE` + `NEXT/CLOSEOUT <rid>` |
 | `scripts/board-block.sh <rid> <nonce> <原因>` | fenced 置阻塞（错派/卡住） | `BLOCKED` |
 | `scripts/board-new-task.sh <主任务> <工作群> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
@@ -27,11 +27,8 @@ description: Use when this bot works on the shared bitable task board (任务看
 2. TODO 行：`board-claim.sh`；RECLAIM 行：`board-reclaim.sh`。失败（LOST/NOT_TODO）跳下一条，**不重试不抱怨**。
 3. 干活。**保存 nonce**；长任务期间定期 `board-heartbeat.sh`，见 `FENCED` 立即静默放弃该任务。
 4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
-5. 完成 → `board-done.sh` 写清产出。
-6. **派发下一步（最容易漏的一步，完成后必须自问：有后继吗？）**
-   - 有后继 → `board-new-task.sh` 建行 + `board-send.sh <工作群> <对方open_id> "看板有新任务：<子任务>"`（open_id 见系统注入的团队花名册）。
-   - 无后继且该主任务已无 待办/进行中 → 建「收尾验收」行给 team-leader 并 @ 它。
-7. 回到 1，直到没有我的活。
+5. 完成必须用 `board-done.sh` 且**必须**带 `--next <角色> <子任务>`（有后继）或 `--last`（没有了）——脚本会自动建后继行/收尾行并 @ 唤醒，不带参数会报错。你只需判断"下一步给谁做什么"，其余交给脚本。
+6. 回到 1，直到没有我的活。
 
 ## 硬规则
 
