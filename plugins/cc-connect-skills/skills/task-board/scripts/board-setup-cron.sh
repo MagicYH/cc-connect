@@ -6,7 +6,7 @@
 #    回复落错群、workspace 错绑。如存在旧 cron（描述"看板自查-*"），用 cc-connect cron 删除。
 set -euo pipefail
 BOSS="${1:-boss}"
-CRON="${2:-*/30 * * * *}"
+CRON="${2:-*/10 * * * *}"   # 每 10 分钟：心跳由 Boss 从群消息推导，粒度太粗会晚发现卡死的 bot
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HOME/.cc-connect/logs/board-watchdog.log"
 LINE="$CRON cd $DIR && CC_PROJECT=$BOSS ./board-watchdog.sh >> $LOG 2>&1"

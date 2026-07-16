@@ -14,20 +14,20 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-my-todos.sh` | 列我的待办 + 可回收的超时进行中 | TSV: rid 类别 子任务 主任务 工作群 |
 | `scripts/board-claim.sh <rid>` | 令牌锁认领（含抖动+回读校验） | `CLAIMED <nonce>`；失败 exit 1 |
 | `scripts/board-reclaim.sh <rid>` | 回收心跳超时的进行中 | `RECLAIMED <nonce>`；未超时拒绝 |
-| `scripts/board-heartbeat.sh <rid> <nonce>` | fenced 心跳（干活期间≥每10分钟） | `FENCED`=已被接管，立即放弃 |
+| `scripts/board-heartbeat.sh <rid> <nonce>` | fenced 心跳刷新（**可选**：心跳已由 Boss 从群消息自动推导，通常无需你手动发） | `FENCED`=已被接管，立即放弃 |
 | `scripts/board-done.sh <rid> <nonce> <产出> ( --next <角色> <子任务> \| --last )` | fenced 置完成，**并强制交代下一步**：--next 自动建后继行+@唤醒；--last 自动判断是否建收尾行给 TL | `DONE` + `NEXT/CLOSEOUT <rid>` |
 | `scripts/board-block.sh <rid> <nonce> <原因>` | fenced 置阻塞（错派/卡住） | `BLOCKED` |
 | `scripts/board-new-task.sh <主任务> <工作群> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
 | `scripts/board-init-project.sh <项目名> <需求> [目录]` | **Boss/TL 专用**：开新项目一条命令完成 建群+拉人+项目行+workspace绑定+@TL 起步 | `PROJECT_READY <chat_id>` |
 | `scripts/board-complete-project.sh <主任务名>` | **TL 收尾专用**：Projects 项目行置已完成+完成时间（重名报 AMBIGUOUS 防误更） | `PROJECT_DONE <rid>` |
-| `scripts/board-watchdog.sh` | **Boss/crontab 专用**：防停滞巡检，把催办直接推到各任务工作群（bot 无需调用） | `WATCHDOG_DONE` |
+| `scripts/board-watchdog.sh` | **Boss/crontab 专用**：防停滞巡检——从群消息自动维护心跳 + 把催办直接推到各任务工作群（bot 无需调用） | `WATCHDOG_DONE` |
 
 ## 工作循环（每次被唤醒）
 
 1. `board-my-todos.sh` → 无输出则直接结束。
 2. TODO 行：`board-claim.sh`；RECLAIM 行：`board-reclaim.sh`。失败（LOST/NOT_TODO）跳下一条，**不重试不抱怨**。
-3. 干活。**保存 nonce**；长任务期间定期 `board-heartbeat.sh`，见 `FENCED` 立即静默放弃该任务。
+3. 干活。**保存 nonce**（`board-done` 收口要用）。**无需定时发心跳**——Boss 巡检会把你在群里的最近消息时间自动写成心跳，只要你在群里有产出/汇报就不会被误判超时；若某次操作返回 `FENCED`（任务已被回收/接管），立即静默放弃。
 4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
 （team-leader 处理收尾验收任务时：验收通过后先 `board-complete-project.sh <主任务名>` 完成项目行，再对收尾任务行执行第 5 步的 `--last`。）
 5. 完成必须用 `board-done.sh` 且**必须**带 `--next <角色> <子任务>`（有后继）或 `--last`（没有了）——脚本会自动建后继行/收尾行并 @ 唤醒，不带参数会报错。你只需判断"下一步给谁做什么"，其余交给脚本。

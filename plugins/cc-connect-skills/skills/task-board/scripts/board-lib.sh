@@ -13,9 +13,11 @@ _lv="BOT_LABEL_${ROLE//-/_}"; ROLE_LABEL="${!_lv:-$ROLE}"
 role_label(){ local v="BOT_LABEL_${1//-/_}"; echo "${!v:-$1}"; }
 NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
 
-# _json —— 剥掉 lark-cli 偶发打在 stdout 前面的非 JSON 横幅（如版本更新提示），
-#          只保留自首个 { 或 [ 起的内容（实测横幅会让下游 jq 报 Invalid numeric literal）
-_json(){ sed -n '/^[[{]/,$p'; }
+# _json —— 剥掉 lark-cli 偶发打在 stdout 前面的非 JSON 横幅（如 `[lark-cli] [WARN] proxy detected...`
+#          或版本更新提示）。只从**第一行以 { 开头**处起——这些 base/im 命令顶层都返回对象 `{...}`，
+#          绝不返回裸数组；而横幅行以 `[` 开头（`[lark-cli]…`），旧的 `/^[[{]/` 会把横幅当成 JSON 起点
+#          放进下游 jq → `Invalid numeric literal at line 1, column 10`（列 10 正是 `[lark-cli]` 的 `]`）。
+_json(){ sed -n '/^{/,$p'; }
 
 # rec_get <record_id>  → JSON 到 stdout
 rec_get(){ lark-cli base +record-get --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --record-id "$1" --format json --as user | _json; }
