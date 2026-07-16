@@ -7,7 +7,7 @@
 1. **建看板**：运行本技能 `scripts/board-setup.sh [看板名]`——自动建 Base 两表并写 `~/.cc-connect/board.env`（含 v1.0.33 命令面适配与半成品表告警）。
 3. **注入协议**：经 Management API `PATCH /api/v1/projects/{name}` 的 `system_prompt` 增量追加（勿覆盖现有 @ 纪律），重启 daemon 生效。
 4. **配置硬前提**（每个角色 bot 的 `[[projects]]`）：`workspace_init_allow_local_paths = true`；`allow_chat`/`allow_from` 留空；`resolve_mentions = false`。
-5. **防停滞巡检**：运行本技能 `scripts/board-setup-cron.sh`（安装 crontab：`board-watchdog.sh` 以 Boss 身份每 30 分钟巡检，催办直接推到各任务的工作群 @责任 bot）。前提：Boss bot app 在每个工作群里（`board-init-project.sh` 建群已自动拉入；老群手动拉）。**旧方案（每角色一条 LLM 自查 cron 锚定固定群）已废弃**——会话锚在固定群导致回复落错群、workspace 错绑；残留的「看板自查-*」cron 请用 `cc-connect cron` 删除。
+5. **防停滞巡检**：先在 `~/.cc-connect/board.env` 配 `BOSS_SESSION_KEY`（Boss 会话，形如 `feishu:oc_xxx`；`cc-connect sessions list` 里取 boss 会话所在群），再运行 `scripts/board-setup-cron.sh`——注册 **cc-connect cron**（`--exec` 直跑 `board-watchdog.sh`，默认每 10 分钟，**在 cc-connect webui 可见/可管**：exec 立即触发 / edit / info 看 last_run·last_error / del）。经 `board-watchdog-cron.sh` 包装以设定 Boss 身份并落日志。前提：Boss bot app 在每个工作群里（`board-init-project.sh` 建群已自动拉入；老群手动拉）。**旧方案已废弃**：①每角色一条 LLM 自查 cron 锚定固定群（会话锚固定群→回复落错群/workspace 错绑）②裸 OS crontab（webui 看不到、难排查）。残留请清理：cc-connect 侧 `cc-connect cron del <描述含「看板自查」/「Task progress check」的 id>`；OS 侧 `crontab -e` 删含 `board-watchdog` 的行。
 
 ## 每个新项目初始化（Boss 流程）
 

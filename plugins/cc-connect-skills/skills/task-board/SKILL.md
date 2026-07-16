@@ -21,7 +21,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
 | `scripts/board-init-project.sh <项目名> <需求> [目录]` | **Boss/TL 专用**：开新项目一条命令完成 建群+拉人+项目行+workspace绑定+@TL 起步 | `PROJECT_READY <chat_id>` |
 | `scripts/board-complete-project.sh <主任务名>` | **TL 收尾专用**：Projects 项目行置已完成+完成时间（重名报 AMBIGUOUS 防误更） | `PROJECT_DONE <rid>` |
-| `scripts/board-watchdog.sh` | **Boss/crontab 专用**：防停滞巡检——从群消息自动维护心跳 + 把催办直接推到各任务工作群（bot 无需调用） | `WATCHDOG_DONE` |
+| `scripts/board-watchdog.sh` | **Boss 定时专用（cc-connect cron，webui 可见）**：防停滞巡检——从群消息自动维护心跳 + 把催办直接推到各任务工作群（bot 无需调用） | `WATCHDOG_DONE` |
 
 ## 工作循环（每次被唤醒）
 

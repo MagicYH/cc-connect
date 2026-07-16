@@ -26,8 +26,9 @@ cd plugins/cc-connect-skills/skills/task-board/scripts
 #    allow_chat / allow_from 留空；resolve_mentions = false
 cc-connect daemon restart
 
-# 3) 安装防停滞巡检 crontab（board-watchdog.sh 以 Boss 身份周期运行，
+# 3) 安装防停滞巡检（注册 cc-connect cron，webui 可见/可管；board-watchdog.sh 以 Boss 身份周期运行，
 #    催办直接推到各任务的工作群 @责任 bot——回复与 workspace 都在正确的群）
+#    先在 board.env 配 BOSS_SESSION_KEY=feishu:oc_xxx（cc-connect sessions list 取 boss 会话的群）
 ./board-setup-cron.sh
 
 # 4) 编辑 ~/.cc-connect/board.env 里的 BOT_LABEL_* 为你实际的 Bot 应用名
@@ -71,7 +72,7 @@ scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任�
 ## 日常使用
 
 - **人工触发**：群里 @ 某 bot 说"检查看板"；
-- **兜底**：watchdog 巡检（crontab，默认每 30 分钟）扫全表——漏派的待办、心跳超时的进行中、阻塞行都会在**各自的工作群**里被催办；等发起人确认设计的行会直接 @发起人；
+- **兜底**：watchdog 巡检（cc-connect cron，默认每 10 分钟，在 webui 可见/可管）扫全表——漏派的待办、心跳超时的进行中、阻塞行都会在**各自的工作群**里被催办；进行中的心跳由 Boss 从群消息自动推导（干活 bot 无需手动发心跳）；等发起人确认设计的行会直接 @发起人；
 - **看历史**：打开看板 Base，按「主任务」筛选即该项目全部任务与状态流转；「工作群」为 Group 字段，点击可直接跳转项目群。
 
 ## 常见问题
@@ -80,6 +81,6 @@ scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任�
 |---|---|
 | bot 被 @ 后只回 "No workspace found" | 该群没做 `/workspace init`；见上文项目初始化第 2 步 |
 | 本地路径 init 被拒 | 配置缺 `workspace_init_allow_local_paths = true` |
-| 催办消息没发出来 | Boss bot app 不在该工作群（老群需手动拉入；新群 init 脚本已自动拉）；看 `~/.cc-connect/logs/board-watchdog.log` |
+| 催办消息没发出来 | Boss bot app 不在该工作群（老群需手动拉入；新群 init 脚本已自动拉）；排查看 `~/.cc-connect/logs/board-watchdog.log` 或 `cc-connect cron info <id>`（webui 亦可） |
 | 消息发不出 230002 | 发送者不在目标群；board-send 以 bot 自己身份发，确保它在群里 |
 | 所有 lark-cli 突然报 need_user_authorization | 有 agent 动了共享认证；恢复见 admin-setup.md，协议已禁止此行为 |
