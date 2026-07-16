@@ -1,6 +1,6 @@
 ---
 name: task-board
-description: Use when this bot works on the shared bitable task board (任务看板) — woken by a group @ mention about board tasks, by a cron self-check prompt mentioning 看板自查, or when dispatching follow-up tasks to other role bots. Not for creating standalone Feishu tasks or generic progress tracking (use task-management for those).
+description: Use when this bot works on the shared bitable task board (任务看板) — woken by a group @ mention about board tasks (e.g. 看板有新任务 / 看板催办 / 看板自查), or when dispatching follow-up tasks to other role bots. Not for creating standalone Feishu tasks or generic progress tracking (use task-management for those).
 ---
 
 # Task Board（多 bot 任务看板协作）
@@ -21,6 +21,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
 | `scripts/board-init-project.sh <项目名> <需求> [目录]` | **Boss/TL 专用**：开新项目一条命令完成 建群+拉人+项目行+workspace绑定+@TL 起步 | `PROJECT_READY <chat_id>` |
 | `scripts/board-complete-project.sh <主任务名>` | **TL 收尾专用**：Projects 项目行置已完成+完成时间（重名报 AMBIGUOUS 防误更） | `PROJECT_DONE <rid>` |
+| `scripts/board-watchdog.sh` | **Boss/crontab 专用**：防停滞巡检，把催办直接推到各任务工作群（bot 无需调用） | `WATCHDOG_DONE` |
 
 ## 工作循环（每次被唤醒）
 
@@ -42,7 +43,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 4. **复杂**：调用 superpowers 技能链（brainstorming → writing-plans，自主推进；歧义与关键取舍**列成问题清单写进设计**，不臆测）产出设计与计划文档 → `board-done.sh <rid> <nonce> <设计文档路径> --next team-leader "待发起人<open_id>确认设计后拆解派发（设计=<路径>）"` → `board-send.sh <工作群> <发起人open_id> "<设计要点+路径+问题清单，请确认后开工>"`。发起人 open_id 取自 kickoff 消息。
 5. **确认跟进任务规则**（子任务含「待发起人…确认」的行）：
    - 本次唤醒消息就是发起人的回复 → 认领：确认则 `--next developer <首个开发子任务>` 开工；有修改意见则按意见修订设计后重复第 4 步收尾。
-   - cron 自查遇到它 → **不认领不心跳**，仅 `board-send.sh` @发起人发一条简短催确认。
+   - 被看板催办消息唤醒时遇到它 → **不认领不心跳**（watchdog 巡检会直接催发起人，无需你转达）。
 
 ## 硬规则
 

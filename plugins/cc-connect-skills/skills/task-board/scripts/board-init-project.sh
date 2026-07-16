@@ -47,8 +47,10 @@ PYEOF
 CALLER_APPID_CONFIG="${CFG_VALUES[0]:-}"
 CFG_DATA_DIR="${CFG_VALUES[1]:-}"
 
-# 1) 建群：角色 bot + 调用者自己的 bot app（否则后续 board-send 报 230002 不在群）+ 看板写入者(+发起人)
+# 1) 建群：角色 bot + Boss（watchdog 巡检要在群里发催办）+ 调用者自己的 bot app（否则后续
+#    board-send 报 230002 不在群）+ 看板写入者(+发起人)
 APPIDS="$BOT_APPID_team_leader,$BOT_APPID_developer,$BOT_APPID_tester,$BOT_APPID_reviewer"
+[ -n "${BOT_APPID_boss:-}" ] && [[ ",$APPIDS," != *",$BOT_APPID_boss,"* ]] && APPIDS="$APPIDS,$BOT_APPID_boss"
 CALLER_APPID_VAR="BOT_APPID_${ROLE//-/_}"
 CALLER_APPID="${!CALLER_APPID_VAR:-}"
 [ -n "$CALLER_APPID" ] || CALLER_APPID="$CALLER_APPID_CONFIG"

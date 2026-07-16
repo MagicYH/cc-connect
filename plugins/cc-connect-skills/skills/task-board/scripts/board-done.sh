@@ -23,14 +23,20 @@ SEND="$(dirname "$0")/board-send.sh"; NEWT="$(dirname "$0")/board-new-task.sh"
 if [ "$MODE" = "--next" ]; then
   NRID=$("$NEWT" "$MT" "$CHAT" "$NEXT_ROLE" "$NEXT_SUB" "$RID")
   ov="BOT_OPENID_${NEXT_ROLE//-/_}"
-  [ -n "${!ov:-}" ] && "$SEND" "$CHAT" "${!ov}" "看板有新任务（主任务 $MT）：$NEXT_SUB，请用 task-board 技能处理" >/dev/null
+  if [ -n "${!ov:-}" ]; then
+    "$SEND" "$CHAT" "${!ov}" "看板有新任务（主任务 $MT）：$NEXT_SUB，请用 task-board 技能处理" >/dev/null \
+      || echo "WARN: 唤醒消息发送失败（任务行已建，watchdog 会兜底催办）" >&2
+  fi
   echo "NEXT $NRID"
 else
   # --last：检查主任务下是否还有 待办/进行中（除本行外）
   LEFT=$(list_rows | jq -r --arg mt "$MT" --arg rid "$RID" '.data as $d | [$d.record_id_list | to_entries[] | select(.value != $rid) | .key as $k | ($d.data[$k]) as $r | (($d.fields | index("主任务")) as $i | $r[$i] // "") as $m | (($d.fields | index("状态")) as $j | $r[$j] | if type=="array" then (.[0]//"") else (.//"") end) as $s | select($m==$mt and ($s=="待办" or $s=="进行中"))] | length')
   if [ "$LEFT" -eq 0 ] && [ "$ROLE" != "team-leader" ]; then
     NRID=$("$NEWT" "$MT" "$CHAT" "team-leader" "收尾验收：$MT 全部子任务已完成，请验收并置项目已完成" "$RID")
-    [ -n "${BOT_OPENID_team_leader:-}" ] && "$SEND" "$CHAT" "$BOT_OPENID_team_leader" "看板有收尾验收任务（主任务 $MT），请用 task-board 技能处理" >/dev/null
+    if [ -n "${BOT_OPENID_team_leader:-}" ]; then
+      "$SEND" "$CHAT" "$BOT_OPENID_team_leader" "看板有收尾验收任务（主任务 $MT），请用 task-board 技能处理" >/dev/null \
+        || echo "WARN: 唤醒消息发送失败（任务行已建，watchdog 会兜底催办）" >&2
+    fi
     echo "CLOSEOUT $NRID"
   else
     echo "LAST ok(剩余未完行=$LEFT)"
