@@ -25,13 +25,15 @@ push(){ # <chat> <open_id> <text> —— 单群失败不中断巡检
   "$SEND" "$1" "$2" "$3" >/dev/null || echo "WARN: push failed chat=$1" >&2
 }
 
+# 分隔符用 \x1f（unit separator）而非 TAB：TAB 属 IFS 空白，read 会把连续 TAB 折叠，
+# 空字段（如待办行的心跳/认领时间）会导致后续字段左移（实测催办消息变成「」）。
 list_rows | jq -r '.data as $d | $d.record_id_list | to_entries[] | .key as $k | ($d.data[$k]) as $r
   | def fv(n): ($d.fields | index(n)) as $i | $r[$i]
       | if type=="array" then (.[0]//"" | if type=="object" then (.id // .name // "") else . end)
         elif .==null then "" else . end;
   [.value, fv("状态"), fv("角色"), fv("工作群"), fv("创建时间"), fv("心跳时间"), fv("认领时间"),
-   (fv("主任务")|gsub("[\t\n]";" ")), (fv("子任务")|gsub("[\t\n]";" "))] | @tsv' |
-while IFS=$'\t' read -r rid st role chat ctime hbtime cltime mt sub; do
+   (fv("主任务")|gsub("[\n]";" ")), (fv("子任务")|gsub("[\n]";" "))] | join("\u001f")' |
+while IFS=$'\x1f' read -r rid st role chat ctime hbtime cltime mt sub; do
   [ -n "$chat" ] || continue
   rolename="$role"
   case "$role" in *"("*")"*) rolename="${role##*(}"; rolename="${rolename%)*}";; esac
