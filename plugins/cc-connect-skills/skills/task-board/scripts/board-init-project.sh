@@ -126,5 +126,5 @@ lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_PROJECT
   --json '{"项目状态":"进行中"}' --as user >/dev/null
 
 # 7) @team-leader 起步
-"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」，需求=${REQ}。工作群与看板已就绪、workspace 已绑定。请按 task-board 技能拆解首个可开工子任务（主任务=${NAME}, 工作群=${CHAT}）并派发。" >/dev/null
+"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」，需求=${REQ}。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先需求分析与技术设计，再拆解派发。" >/dev/null
 echo "PROJECT_READY $CHAT"

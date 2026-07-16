@@ -32,6 +32,18 @@ description: Use when this bot works on the shared bitable task board (任务看
 5. 完成必须用 `board-done.sh` 且**必须**带 `--next <角色> <子任务>`（有后继）或 `--last`（没有了）——脚本会自动建后继行/收尾行并 @ 唤醒，不带参数会报错。你只需判断"下一步给谁做什么"，其余交给脚本。
 6. 回到 1，直到没有我的活。
 
+## 项目启动·设计先行（team-leader 专属）
+
+被新项目 kickoff @（消息含"新项目"）或收到整块新需求时，**禁止直接给 developer 建任务**，先走设计阶段：
+
+1. 自建设计任务并认领：`board-new-task.sh <主任务> <工作群> team-leader "需求分析与技术设计"` → `board-claim.sh`。
+2. 评估复杂度，满足任一即**复杂**：需要架构/技术选型；预计子任务 >3 个；跨多模块或服务；需求含糊、有关键取舍需发起人定夺。否则**简单**。
+3. **简单**：在工作目录写 `docs/design.md`（需求理解 / 方案 / 任务拆解 / 各任务验收标准）→ `board-send.sh` 向工作群公示设计要点+文档路径（不 @）→ `board-done.sh <rid> <nonce> docs/design.md --next developer "<首个开发子任务>"` 直接开工。
+4. **复杂**：调用 superpowers 技能链（brainstorming → writing-plans，自主推进；歧义与关键取舍**列成问题清单写进设计**，不臆测）产出设计与计划文档 → `board-done.sh <rid> <nonce> <设计文档路径> --next team-leader "待发起人<open_id>确认设计后拆解派发（设计=<路径>）"` → `board-send.sh <工作群> <发起人open_id> "<设计要点+路径+问题清单，请确认后开工>"`。发起人 open_id 取自 kickoff 消息。
+5. **确认跟进任务规则**（子任务含「待发起人…确认」的行）：
+   - 本次唤醒消息就是发起人的回复 → 认领：确认则 `--next developer <首个开发子任务>` 开工；有修改意见则按意见修订设计后重复第 4 步收尾。
+   - cron 自查遇到它 → **不认领不心跳**，仅 `board-send.sh` @发起人发一条简短催确认。
+
 ## 硬规则
 
 - **消息只用 board-send**（自己 app 身份、token 不落盘）；@ 只用于派发与求助，其余回复不得含 `<at>`（防回环）。
