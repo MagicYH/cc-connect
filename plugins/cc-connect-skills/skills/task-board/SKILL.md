@@ -20,6 +20,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 | `scripts/board-new-task.sh <主任务> <工作群> <角色> <子任务> [来源rid]` | 建后继任务行 | 新行 rid |
 | `scripts/board-send.sh <chatID> <open_id\|-> <文本>` | 以**自己 bot app 身份**发群消息/@ | `OK <msg_id>` |
 | `scripts/board-init-project.sh <项目名> <需求> [目录]` | **Boss/TL 专用**：开新项目一条命令完成 建群+拉人+项目行+workspace绑定+@TL 起步 | `PROJECT_READY <chat_id>` |
+| `scripts/board-complete-project.sh <主任务名>` | **TL 收尾专用**：Projects 项目行置已完成+完成时间（重名报 AMBIGUOUS 防误更） | `PROJECT_DONE <rid>` |
 
 ## 工作循环（每次被唤醒）
 
@@ -27,6 +28,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 2. TODO 行：`board-claim.sh`；RECLAIM 行：`board-reclaim.sh`。失败（LOST/NOT_TODO）跳下一条，**不重试不抱怨**。
 3. 干活。**保存 nonce**；长任务期间定期 `board-heartbeat.sh`，见 `FENCED` 立即静默放弃该任务。
 4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
+（team-leader 处理收尾验收任务时：验收通过后先 `board-complete-project.sh <主任务名>` 完成项目行，再对收尾任务行执行第 5 步的 `--last`。）
 5. 完成必须用 `board-done.sh` 且**必须**带 `--next <角色> <子任务>`（有后继）或 `--last`（没有了）——脚本会自动建后继行/收尾行并 @ 唤醒，不带参数会报错。你只需判断"下一步给谁做什么"，其余交给脚本。
 6. 回到 1，直到没有我的活。
 
