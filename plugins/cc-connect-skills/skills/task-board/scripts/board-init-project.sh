@@ -20,8 +20,11 @@ done
 : "${BOARD_WRITER_OPENID:?board.env 缺 BOARD_WRITER_OPENID}"
 WORKDIR="${3:-${PROJECTS_BASE_DIR:?board.env 缺 PROJECTS_BASE_DIR}/$NAME}"
 
-# 1) 建群：角色 bot + 看板写入者(+发起人)
+# 1) 建群：角色 bot + 调用者自己的 bot app（否则后续 board-send 报 230002 不在群）+ 看板写入者(+发起人)
 APPIDS="$BOT_APPID_team_leader,$BOT_APPID_developer,$BOT_APPID_tester,$BOT_APPID_reviewer"
+CALLER_APPID_VAR="BOT_APPID_${ROLE//-/_}"
+CALLER_APPID="${!CALLER_APPID_VAR:-}"
+if [ -n "$CALLER_APPID" ] && ! echo ",$APPIDS," | grep -q ",$CALLER_APPID,"; then APPIDS="$APPIDS,$CALLER_APPID"; fi
 USERS="$BOARD_WRITER_OPENID"
 [ -n "${INITIATOR_OPENID:-}" ] && [ "$INITIATOR_OPENID" != "$BOARD_WRITER_OPENID" ] && USERS="$USERS,$INITIATOR_OPENID"
 CHAT=$(lark-cli im +chat-create --name "$NAME" --bots "$APPIDS" --users "$USERS" --as user | jq -r '.data.chat_id // .data.chat.chat_id // empty')
