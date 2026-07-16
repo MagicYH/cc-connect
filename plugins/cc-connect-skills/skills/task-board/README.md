@@ -83,4 +83,5 @@ scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任�
 | 本地路径 init 被拒 | 配置缺 `workspace_init_allow_local_paths = true` |
 | 催办消息没发出来 | Boss bot app 不在该工作群（老群需手动拉入；新群 init 脚本已自动拉）；排查看 `~/.cc-connect/logs/board-watchdog.log` 或 `cc-connect cron info <id>`（webui 亦可） |
 | 消息发不出 230002 | 发送者不在目标群；board-send 以 bot 自己身份发，确保它在群里 |
+| 某任务一直没被催 / 日志出现 `SKIP_UNRESOLVED` | 该行「角色」写成了非法值（既非角色键 `reviewer`、也非 label `Gamma (reviewer)`、也非 bot 名 `Gamma`）→ watchdog 无法映射到 bot。修正该行「角色」字段即可（watchdog 已兜住裸 bot 名，但彻底乱写仍会 SKIP 并在日志留痕） |
 | 所有 lark-cli 突然报 need_user_authorization | 有 agent 动了共享认证；恢复见 admin-setup.md，协议已禁止此行为 |

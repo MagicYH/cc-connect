@@ -52,6 +52,24 @@ last_role_msg(){
   date -d "$raw" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo ""
 }
 
+# resolve_role <角色字段原值> → 规范角色键(连字符形式，如 team-leader / reviewer)；解析不出输出空。
+# 兼容三种写法：完整 label「Beta (team-leader)」、角色键「team-leader」、以及**裸 bot 名「Gamma」**。
+# 实测踩坑：派单方把「角色」写成裸 bot 名而非角色键 → 旧逻辑 BOT_OPENID_Gamma 为空 → 该行被静默跳过，
+# 一个真卡住的任务对看门狗变成隐形。反向解析兜住这种脏数据；实在解析不出的由调用处打 SKIP_UNRESOLVED。
+KNOWN_ROLES=$(compgen -v | sed -n 's/^BOT_OPENID_//p')   # 从 board.env 的 BOT_OPENID_* 动态推出已知角色
+resolve_role(){
+  local raw="$1" cand r label name
+  case "$raw" in *"("*")"*) cand="${raw##*(}"; cand="${cand%)*}";; *) cand="$raw";; esac
+  local uv="BOT_OPENID_${cand//-/_}"
+  [ -n "${!uv:-}" ] && { echo "${cand//_/-}"; return; }   # 已是角色键（或 label 内层就是角色键）
+  for r in $KNOWN_ROLES; do                               # 否则当裸 bot 名，比对各角色 BOT_LABEL 的前导名/全 label
+    label="BOT_LABEL_${r}"; label="${!label:-}"; [ -n "$label" ] || continue
+    name="${label%% (*}"
+    { [ "$cand" = "$label" ] || [ "$cand" = "$name" ]; } && { echo "${r//_/-}"; return; }
+  done
+  echo ""
+}
+
 # 分隔符用 \x1f（unit separator）而非 TAB：TAB 属 IFS 空白，read 会把连续 TAB 折叠，
 # 空字段（如待办行的心跳/认领时间）会导致后续字段左移（实测催办消息变成「」）。
 list_rows | jq -r '.data as $d | $d.record_id_list | to_entries[] | .key as $k | ($d.data[$k]) as $r
@@ -62,10 +80,9 @@ list_rows | jq -r '.data as $d | $d.record_id_list | to_entries[] | .key as $k |
    (fv("主任务")|gsub("[\n]";" ")), (fv("子任务")|gsub("[\n]";" "))] | join("\u001f")' |
 while IFS=$'\x1f' read -r rid st role chat ctime hbtime cltime mt sub; do
   [ -n "$chat" ] || continue
-  rolename="$role"
-  case "$role" in *"("*")"*) rolename="${role##*(}"; rolename="${rolename%)*}";; esac
-  ov="BOT_OPENID_${rolename//-/_}"      # @唤醒用的 open_id
-  av="BOT_APPID_${rolename//-/_}"       # 群消息发送者匹配用的 app_id
+  role_key=$(resolve_role "$role")     # 规范角色键（兼容 label / 角色键 / 裸 bot 名）
+  ov="BOT_OPENID_${role_key//-/_}"     # @唤醒用的 open_id
+  av="BOT_APPID_${role_key//-/_}"      # 群消息发送者匹配用的 app_id
   case "$st" in
     待办)
       if [[ "$sub" =~ 待发起人(ou_[a-z0-9]+) ]]; then
@@ -75,9 +92,9 @@ while IFS=$'\x1f' read -r rid st role chat ctime hbtime cltime mt sub; do
       fi
       AGE=$(age_min "${ctime:-}")
       [ "$AGE" -ge "$STALL_TODO_MIN" ] || continue
-      [ -n "${!ov:-}" ] || continue
+      if [ -z "$role_key" ] || [ -z "${!ov:-}" ]; then echo "SKIP_UNRESOLVED $rid 待办 角色=[$role]"; continue; fi
       push "$chat" "${!ov}" "看板催办：待办任务「$sub」（主任务 $mt）已 ${AGE} 分钟未开始。开始前请先用**异步 subagent** 执行 task-board 技能认领（board-claim）并置进行中，再动手。"
-      echo "PUSH_TODO $rid $rolename"
+      echo "PUSH_TODO $rid $role_key"
       ;;
     进行中)
       # 心跳由 Boss 推导：取该角色最后群消息时间，比库里心跳新就写回
@@ -87,15 +104,15 @@ while IFS=$'\x1f' read -r rid st role chat ctime hbtime cltime mt sub; do
         rec_upsert "$rid" "$(jq -nc --arg t "$LASTMSG" '{"心跳时间":$t}')" >/dev/null \
           || echo "WARN: 心跳写入失败 rid=$rid" >&2
         hbtime="$LASTMSG"
-        echo "HB_WRITE $rid $rolename $LASTMSG"
+        echo "HB_WRITE $rid $role_key $LASTMSG"
       fi
       # 据最新可用时间判超时：群消息 > 库心跳 > 认领 > 创建
       LAST="$LASTMSG"; [ -n "$LAST" ] || LAST="${hbtime:-}"; [ -n "$LAST" ] || LAST="${cltime:-}"; [ -n "$LAST" ] || LAST="${ctime:-}"
       AGE=$(age_min "$LAST")
       [ "$AGE" -ge "$STALL_HB_MIN" ] || continue
-      [ -n "${!ov:-}" ] || continue
+      if [ -z "$role_key" ] || [ -z "${!ov:-}" ]; then echo "SKIP_UNRESOLVED $rid 进行中 角色=[$role]"; continue; fi
       push "$chat" "${!ov}" "看板催办：进行中任务「$sub」（主任务 $mt）已 ${AGE} 分钟无群消息更新。若已完成，请把工作纪要落到文档，再用**异步 subagent** 执行 task-board 技能 board-done 更新状态与产物、指派下一个任务；若未完成请继续推进。"
-      echo "PUSH_STALE $rid $rolename"
+      echo "PUSH_STALE $rid $role_key"
       ;;
     阻塞)
       [ -n "${BOT_OPENID_team_leader:-}" ] || continue
