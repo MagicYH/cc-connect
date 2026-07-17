@@ -17,6 +17,22 @@ TF='[{"field_name":"子任务","type":"text"},{"field_name":"主任务","type":"
 TBL_TASKS=$(lark-cli base +table-create --base-token "$BOARD_BASE" --name Tasks --fields "$TF" --as user | jq -r '.data.table.id // empty')
 [ -n "$TBL_TASKS" ] || { echo "FATAL: Tasks table failed" >&2; exit 1; }
 
+# 日期字段显示格式统一为 yyyy-MM-dd HH:mm（飞书原生 formatter 极限：到分钟，无秒、无时区后缀；
+# 时区随 base 设置）。走标准 field-update 设 property.date_formatter——table-create 的 fields 对
+# select 的 property 会被飞书拒（见顶部注释），故 formatter 单独 field-update 更稳；现有看板迁移可复用本段。
+FMT="yyyy-MM-dd HH:mm"
+set_fmt(){ # <table_id> <field_name> <type: datetime|created_at>
+  lark-cli base +field-update --base-token "$BOARD_BASE" --table-id "$1" --field-id "$2" \
+    --json "$(jq -nc --arg n "$2" --arg t "$3" --arg f "$FMT" '{field_name:$n,type:$t,property:{date_formatter:$f}}')" --yes >/dev/null \
+    || echo "WARN: 设置「$2」显示格式失败（可在 bitable 表头手动改为 $FMT）" >&2
+}
+set_fmt "$TBL_PROJECTS" "创建时间" "created_at"
+set_fmt "$TBL_PROJECTS" "完成时间" "datetime"
+set_fmt "$TBL_TASKS" "认领时间" "datetime"
+set_fmt "$TBL_TASKS" "心跳时间" "datetime"
+set_fmt "$TBL_TASKS" "创建时间" "created_at"
+set_fmt "$TBL_TASKS" "完成时间" "datetime"
+
 mkdir -p ~/.cc-connect
 cat > ~/.cc-connect/board.env <<EOV
 BOARD_BASE=$BOARD_BASE
