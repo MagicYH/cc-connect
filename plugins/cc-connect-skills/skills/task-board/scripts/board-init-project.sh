@@ -76,9 +76,11 @@ mark_failed(){
 }
 trap 'mark_failed' ERR
 
-# 3) 工作目录（/workspace route 要求绝对路径且不展开 ~/相对：先建目录，再归一为绝对路径）
+# 3) 工作目录（/workspace route 要求绝对路径且不展开 ~/相对：先建目录，再归一为绝对**物理**路径）
+#    必须 pwd -P 解析 symlink（如 dev-sg 的 /home→/data00/home）：cc-connect 的 route 会把路径归一成
+#    物理路径存进 workspace_bindings；若这里用逻辑路径(pwd -L)，第 5 步轮询比对会因 symlink 差异误判未绑定。
 mkdir -p "$WORKDIR"
-WORKDIR=$(cd "$WORKDIR" && pwd)
+WORKDIR=$(cd "$WORKDIR" && pwd -P)
 ( cd "$WORKDIR" && git init -q 2>/dev/null || true )
 echo "workdir=$WORKDIR"
 
