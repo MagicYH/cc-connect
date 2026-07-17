@@ -25,8 +25,9 @@ if [ "$MODE" = "--next" ]; then
   NEXT_KEY=$(resolve_role "$NEXT_ROLE")     # 归一：兼容 角色键/裸bot名/label
   ov="BOT_OPENID_${NEXT_KEY//-/_}"
   if [ -n "$NEXT_KEY" ] && [ "$NEXT_KEY" = "$ROLE" ]; then
-    # 同角色续办：@自己会在群里造成"自己 mention 自己"，且本会话工作循环本就会接着处理 → 不发唤醒
-    echo "SELF_NEXT $NRID（同角色续办：行已建，本会话继续处理，不 @ 自己；若本会话已结束由 watchdog 兜底催办）"
+    # 同角色：只应用于"停下等外部"（设计立项/等人类确认）；自己的连续工作本不该建此行（应在原任务内做完）。
+    # 不 @ 自己（避免群里自 @），本会话工作循环/‑watchdog 会接手。
+    echo "SELF_NEXT $NRID（同角色：仅限设计立项/等外部确认这类"停下等"场景；若只是你自己的连续工作，本不该建此行——应在原任务内做完。已建行、不@自己）"
   elif [ -n "$NEXT_KEY" ] && [ -n "${!ov:-}" ]; then
     "$SEND" "$CHAT" "${!ov}" "看板有新任务（主任务 $MT）：$NEXT_SUB，请用 task-board 技能处理" >/dev/null \
       || echo "WARN: 唤醒消息发送失败（任务行已建，watchdog 会兜底催办）" >&2

@@ -25,12 +25,14 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 ## 工作循环（每次被唤醒）
 
+> **看板 = 跨角色协作的交接，不是你自己的 todo。** 同一角色的连续多步（如 developer 的多步开发），在**一个已认领的任务里一次做完**，别拆成多个自建任务反复 @ 激活自己（既慢又吵）。只有把活交给**别的角色**、或需**停下等外部**（设计立项 / 等人类确认）时，才走看板建任务/`--next`。
+
 1. `board-my-todos.sh` → 无输出则直接结束。
 2. TODO 行：`board-claim.sh`；RECLAIM 行：`board-reclaim.sh`。失败（LOST/NOT_TODO）跳下一条，**不重试不抱怨**。
 3. 干活。**保存 nonce**（`board-done` 收口要用）。**无需定时发心跳**——Boss 巡检会把你在群里的最近消息时间自动写成心跳，只要你在群里有产出/汇报就不会被误判超时；若某次操作返回 `FENCED`（任务已被回收/接管），立即静默放弃。
 4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
 （team-leader 处理收尾验收任务时：验收通过后先 `board-complete-project.sh <主任务名>` 完成项目行，再对收尾任务行执行第 5 步的 `--last`。）
-5. 完成必须用 `board-done.sh` 且**必须**带 `--next <角色> <子任务>`（有后继）或 `--last`（没有了）——脚本会自动建后继行/收尾行并 @ 唤醒，不带参数会报错。你只需判断"下一步给谁做什么"，其余交给脚本。
+5. **你这一整段活全部做完**再用 `board-done.sh` 收口，带 `--next <别的角色> <子任务>`（交接给下一个角色）或 `--last`（没有后续角色了）——脚本自动建后继行/收尾行并 @ 唤醒，不带参数会报错。**后续若还是你自己的活，别 board-done、别给自己建任务——在当前任务里继续做完。** `--next` 的 `<角色>` 正常应是**别的角色**；给自己（同角色）仅限"停下等外部"（设计立项 / 等人类确认）场景。
 6. 回到 1，直到没有我的活。
 
 ## 项目启动·设计先行（team-leader 专属）
@@ -45,10 +47,12 @@ description: Use when this bot works on the shared bitable task board (任务看
    - 本次唤醒消息就是发起人的回复 → 认领：确认则 `--next developer <首个开发子任务>` 开工；有修改意见则按意见修订设计后重复第 4 步收尾。
    - 被看板催办消息唤醒时遇到它 → **不认领不心跳**（watchdog 巡检会直接催发起人，无需你转达）。
 
+> **拆解粒度（TL 拆计划时）**：给同一角色的连续步骤**合并成一个看板任务**（如把 plan 的 Task1–5 作为**一行** developer 任务，让 developer 在这一个任务内连续做完），**不要一个 plan-step 建一行**再让它反复自我激活。看板行只在**换角色**时才新增。（设计立项那行是本节唯一允许的同角色任务——它是设计阶段看板上的把手，供 watchdog 兜底。）
+
 ## 硬规则
 
 - **消息只用 board-send**（自己 app 身份、token 不落盘）；@ 只用于派发与求助，其余回复不得含 `<at>`（防回环）。
-- **派发用角色键**：`--next`/`new-task` 的 `<角色>` 只能是 `team-leader`/`developer`/`tester`/`reviewer`（**角色键，不是 Bot 显示名**如 Gamma/Delta；人类说「@Gamma」时你要翻译成 `reviewer`）。脚本已归一化并对无法识别的值报错。给"下一步"派同角色（如 developer→developer 多步开发）时，脚本自动**不 @ 自己**（本会话工作循环会接着处理），不会在群里自己 @ 自己。
+- **派发用角色键**：`--next`/`new-task` 的 `<角色>` 只能是 `team-leader`/`developer`/`tester`/`reviewer`（**角色键，不是 Bot 显示名**如 Gamma/Delta；人类说「@Gamma」时你要翻译成 `reviewer`）。脚本已归一化并对无法识别的值报错。`--next` 正常派**别的角色**（交接）；给自己（同角色）**仅限设计立项 / 等人类确认这类"停下等外部"场景**（不是把自己的连续开发拆成多任务），脚本对同角色不 @ 自己。
 - **严禁**任何 `lark-cli auth` 操作/切 app/改 `~/.lark-cli/config.json`；遇认证错误如实报告并停止。
 - **忽略其它任务管理类 skill**（如 task-management）——看板任务只走本技能。
 
