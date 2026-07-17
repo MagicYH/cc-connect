@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # board-init-project.sh <项目名> <需求描述> [工作目录]
+#   [工作目录] 可为新建目录，也可为**已有 git 仓库**路径（幂等，不动其工作树/历史）。
 # 一键初始化新项目（供 Boss/TL agent 调用）：
-#   建群(拉齐角色bot+看板写入者+发起人) → 写Projects行(初始化中) → 建工作目录(git init)
-#   → 逐个 @bot 绑定 workspace → 轮询绑定生效 → 置进行中 → @team-leader 起步
+#   建群(拉齐角色bot+看板写入者+发起人) → 写Projects行(初始化中) → 建/复用工作目录(git init 幂等)
+#   → 逐个 @bot 用 /workspace route 绑定该绝对目录 → 轮询绑定生效 → 置进行中 → @team-leader 起步
 # 输出最后一行: PROJECT_READY <chat_id>
 # 依赖 ~/.cc-connect/board.env 提供:
 #   BOT_APPID_<role> / BOT_OPENID_<role>（team_leader/developer/tester/reviewer）
@@ -75,8 +76,10 @@ mark_failed(){
 }
 trap 'mark_failed' ERR
 
-# 3) 工作目录
-mkdir -p "$WORKDIR"; ( cd "$WORKDIR" && git init -q 2>/dev/null || true )
+# 3) 工作目录（/workspace route 要求绝对路径且不展开 ~/相对：先建目录，再归一为绝对路径）
+mkdir -p "$WORKDIR"
+WORKDIR=$(cd "$WORKDIR" && pwd)
+( cd "$WORKDIR" && git init -q 2>/dev/null || true )
 echo "workdir=$WORKDIR"
 
 # 4) 逐个 @bot 绑定 workspace（board-send 以 CC_PROJECT 身份发；bot 处理需数秒）
@@ -84,7 +87,7 @@ SEND="$(dirname "$0")/board-send.sh"
 WORKDIR_ARG="'${WORKDIR//\'/\'\\\'\'}'"
 for r in "${ROLES[@]}"; do
   ov="BOT_OPENID_$r"
-  "$SEND" "$CHAT" "${!ov}" "/workspace init $WORKDIR_ARG" >/dev/null
+  "$SEND" "$CHAT" "${!ov}" "/workspace route $WORKDIR_ARG" >/dev/null
   sleep 2
 done
 

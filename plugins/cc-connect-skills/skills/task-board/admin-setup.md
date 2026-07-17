@@ -6,14 +6,14 @@
 
 1. **建看板**：运行本技能 `scripts/board-setup.sh [看板名]`——自动建 Base 两表并写 `~/.cc-connect/board.env`（含 v1.0.33 命令面适配与半成品表告警）。
 3. **注入协议**：经 Management API `PATCH /api/v1/projects/{name}` 的 `system_prompt` 增量追加（勿覆盖现有 @ 纪律），重启 daemon 生效。
-4. **配置硬前提**（每个角色 bot 的 `[[projects]]`）：`workspace_init_allow_local_paths = true`；`allow_chat`/`allow_from` 留空；`resolve_mentions = false`。
+4. **配置硬前提**（每个角色 bot 的 `[[projects]]`）：`allow_chat`/`allow_from` 留空；`resolve_mentions = false`。（`workspace_init_allow_local_paths` **已非必需**——`board-init-project.sh` 与手动初始化均改用 `/workspace route` 绑定本地目录，route 不消费该开关；仅当你坚持手动用 `/workspace init <本地路径>` 时才需 `= true`。）
 5. **防停滞巡检**：先在 `~/.cc-connect/board.env` 配 `BOSS_SESSION_KEY`（Boss 会话，形如 `feishu:oc_xxx`；`cc-connect sessions list` 里取 boss 会话所在群），再运行 `scripts/board-setup-cron.sh`——注册 **cc-connect cron**（`--exec` 直跑 `board-watchdog.sh`，默认每 10 分钟，**在 cc-connect webui 可见/可管**：exec 立即触发 / edit / info 看 last_run·last_error / del）。经 `board-watchdog-cron.sh` 包装以设定 Boss 身份并落日志。前提：Boss bot app 在每个工作群里（`board-init-project.sh` 建群已自动拉入；老群手动拉）。**旧方案已废弃**：①每角色一条 LLM 自查 cron 锚定固定群（会话锚固定群→回复落错群/workspace 错绑）②裸 OS crontab（webui 看不到、难排查）。残留请清理：cc-connect 侧 `cc-connect cron del <描述含「看板自查」/「Task progress check」的 id>`；OS 侧 `crontab -e` 删含 `board-watchdog` 的行。
 
 ## 每个新项目初始化（Boss 流程）
 
 1. `lark-cli im +chat-create --bots <角色app_id逗号分隔> --users <发起人open_id>` 建群。
 2. 立即写 Projects 行（项目状态=初始化中）。
-3. **逐个 @ 每个角色 bot** 发 `/workspace init <工作目录绝对路径>`（缺这步 bot 被 @ 只回 "No workspace found" 不干活）。
+3. **逐个 @ 每个角色 bot** 发 `/workspace route <工作目录绝对路径>`（route=绑定一个**已存在**的绝对目录，不 clone、不 git init；目录须先建好。缺这步 bot 被 @ 只回 "No workspace found" 不干活）。目录可为新建空目录，也可为**已有 git 仓库**——`board-init-project.sh` 的第三参 `[工作目录]` 传已有仓库路径即走此路径。
 4. 全部成功 → 项目状态=进行中，@team-leader 起步；失败 → 项目状态=初始化失败+备注，不留孤儿。
 
 ## 已知坑速查

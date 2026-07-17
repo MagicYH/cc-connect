@@ -120,7 +120,7 @@ func TestBoardInitProjectAddsCallerBotFromConfig(t *testing.T) {
 	}
 }
 
-func TestBoardInitProjectQuotesWorkspacePathInInitMessage(t *testing.T) {
+func TestBoardInitProjectQuotesWorkspacePathInRouteMessage(t *testing.T) {
 	h := newBoardInitHarness(t)
 	workDir := filepath.Join(h.tempDir, "work", "demo project")
 	writeInitBoardEnv(t, h.homeDir, h.tempDir)
@@ -130,8 +130,8 @@ func TestBoardInitProjectQuotesWorkspacePathInInitMessage(t *testing.T) {
 	_, _ = h.run("developer", "demo-project", "demo requirement", workDir)
 
 	sends := readOptionalFile(t, h.sendLog)
-	if !strings.Contains(sends, "/workspace init '"+workDir+"'") {
-		t.Fatalf("expected workspace init message to quote path with spaces; sends:\n%s", sends)
+	if !strings.Contains(sends, "/workspace route '"+workDir+"'") {
+		t.Fatalf("expected workspace route message to quote path with spaces; sends:\n%s", sends)
 	}
 }
 

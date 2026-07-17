@@ -21,9 +21,9 @@ cd plugins/cc-connect-skills/skills/task-board/scripts
 # 1) 建看板（Base + Projects/Tasks 两表），自动写 ~/.cc-connect/board.env
 ./board-setup.sh "我的任务看板"
 
-# 2) 各角色 bot 的 [[projects]] 配置确认三件事，然后重启 daemon：
-#    workspace_init_allow_local_paths = true
+# 2) 各角色 bot 的 [[projects]] 配置确认两件事，然后重启 daemon：
 #    allow_chat / allow_from 留空；resolve_mentions = false
+#    （workspace 绑定走 /workspace route，无需 workspace_init_allow_local_paths）
 cc-connect daemon restart
 
 # 3) 安装防停滞巡检（注册 cc-connect cron，webui 可见/可管；board-watchdog.sh 以 Boss 身份周期运行，
@@ -40,7 +40,7 @@ cc-connect daemon restart
 ## 每个新项目的初始化
 
 1. 建项目群、拉齐角色 bot；
-2. **逐个 @ 每个 bot** 发 `/workspace init <工作目录绝对路径>`（漏了 bot 不干活）；
+2. **逐个 @ 每个 bot** 发 `/workspace route <工作目录绝对路径>`（绑定已存在的绝对目录，可为空目录或已有 git 仓库；漏了 bot 不干活）；
 3. 写 Projects 行（主任务名/工作群/状态=进行中）；
 4. 在群里 @team-leader 起步。
 
@@ -79,8 +79,8 @@ scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任�
 
 | 问题 | 答案 |
 |---|---|
-| bot 被 @ 后只回 "No workspace found" | 该群没做 `/workspace init`；见上文项目初始化第 2 步 |
-| 本地路径 init 被拒 | 配置缺 `workspace_init_allow_local_paths = true` |
+| bot 被 @ 后只回 "No workspace found" | 该群没做 `/workspace route`；见上文项目初始化第 2 步 |
+| 本地路径 `/workspace init` 被拒 | 改用 `/workspace route <绝对路径>`（route 绑定已存在目录、不需要 `workspace_init_allow_local_paths`）；或给配置加 `= true` 才能用 init 绑本地路径 |
 | 催办消息没发出来 | Boss bot app 不在该工作群（老群需手动拉入；新群 init 脚本已自动拉）；排查看 `~/.cc-connect/logs/board-watchdog.log` 或 `cc-connect cron info <id>`（webui 亦可） |
 | 消息发不出 230002 | 发送者不在目标群；board-send 以 bot 自己身份发，确保它在群里 |
 | 某任务一直没被催 / 日志出现 `SKIP_UNRESOLVED` | 该行「角色」写成了非法值（既非角色键 `reviewer`、也非 label `Gamma (reviewer)`、也非 bot 名 `Gamma`）→ watchdog 无法映射到 bot。修正该行「角色」字段即可（watchdog 已兜住裸 bot 名，但彻底乱写仍会 SKIP 并在日志留痕） |
