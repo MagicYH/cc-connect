@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # board-init-project.sh <项目名> <需求描述> [工作目录]
+#   <需求描述> 可为文本，或 @<文件路径>（读文件全文；长/多行需求走文件，避免命令行截断或被 LLM 精简）。
 #   [工作目录] 可为新建目录，也可为**已有 git 仓库**路径（幂等，不动其工作树/历史）。
 # 一键初始化新项目（供 Boss/TL agent 调用）：
 #   建群(拉齐角色bot+看板写入者+发起人) → 写Projects行(初始化中) → 建/复用工作目录(git init 幂等)
@@ -13,6 +14,12 @@ set -euo pipefail
 source "$(dirname "$0")/board-lib.sh"
 NAME="${1:?usage: board-init-project.sh <项目名> <需求> [工作目录]}"
 REQ="${2:?need 需求描述}"
+# 需求可传 @<文件路径>：读文件全文作为需求。长/多行需求若经命令行参数传，易被 Boss(LLM) 精简成
+# 一句话、或被 shell 转义/截断坏；走文件可无损承载用户原文（Boss 用 Write 写原文到文件后传 @path）。
+case "$REQ" in
+  @?*) REQ_FILE="${REQ#@}"; [ -f "$REQ_FILE" ] || { echo "FATAL: 需求文件不存在: $REQ_FILE" >&2; exit 1; }; REQ=$(cat "$REQ_FILE");;
+esac
+[ -n "${REQ//[[:space:]]/}" ] || { echo "FATAL: 需求为空" >&2; exit 1; }
 ROLES=(team_leader developer tester reviewer)
 ROLE_COUNT=${#ROLES[@]}
 CONFIG_FILE="${CC_CONNECT_CONFIG:-$HOME/.cc-connect/config.toml}"
@@ -84,6 +91,11 @@ WORKDIR=$(cd "$WORKDIR" && pwd -P)
 ( cd "$WORKDIR" && git init -q 2>/dev/null || true )
 echo "workdir=$WORKDIR"
 
+# 3b) 完整需求原文落文档（跨角色以文档为准；TL 从此读完整需求做设计，避免 @消息/字段被截断而丢意图）
+mkdir -p "$WORKDIR/docs"
+printf '# 需求（发起人原文）\n\n%s\n' "$REQ" > "$WORKDIR/docs/requirement.md"
+echo "requirement_doc=$WORKDIR/docs/requirement.md"
+
 # 4) 逐个 @bot 绑定 workspace（board-send 以 CC_PROJECT 身份发；bot 处理需数秒）
 SEND="$(dirname "$0")/board-send.sh"
 WORKDIR_ARG="'${WORKDIR//\'/\'\\\'\'}'"
@@ -118,6 +130,9 @@ fi
 lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_PROJECTS" --record-id "$PRID" \
   --json '{"项目状态":"进行中"}' --as user >/dev/null
 
-# 7) @team-leader 起步
-"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」，需求=${REQ}。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先需求分析与技术设计，再拆解派发。" >/dev/null
+# 7) @team-leader 起步（完整需求以 docs/requirement.md 为准；消息附原文做冗余，二者皆为完整原文）
+"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」。完整需求（发起人原文）已写入工作目录 docs/requirement.md，**以该文档全文为准，勿凭节选臆测或自行删减**。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先通读 docs/requirement.md 全文，再做需求分析与技术设计，然后拆解派发。
+
+需求原文：
+${REQ}" >/dev/null
 echo "PROJECT_READY $CHAT"
