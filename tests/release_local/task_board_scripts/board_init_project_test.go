@@ -148,6 +148,12 @@ func newBoardInitHarness(t *testing.T) boardInitHarness {
 	t.Helper()
 	repoRoot := findRepoRoot(t)
 	tempDir := t.TempDir()
+	// 脚本用 pwd -P 归一为物理路径（真机 cc-connect 的 /workspace route 亦把路径解析成物理路径存 binding）；
+	// macOS 的 /var 是 /private/var 的 symlink，t.TempDir() 返回逻辑路径 → 与脚本物理路径不一致会让
+	// 绑定轮询/route 消息断言 mismatch。解析成物理路径使 fixture 与脚本行为对齐。
+	if resolved, err := filepath.EvalSymlinks(tempDir); err == nil {
+		tempDir = resolved
+	}
 	h := boardInitHarness{
 		tempDir:   tempDir,
 		homeDir:   filepath.Join(tempDir, "home"),
