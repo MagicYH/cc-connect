@@ -21,10 +21,19 @@ TBL_TASKS=$(lark-cli base +table-create --base-token "$BOARD_BASE" --name Tasks 
 # 时区随 base 设置）。走标准 field-update 设 property.date_formatter——table-create 的 fields 对
 # select 的 property 会被飞书拒（见顶部注释），故 formatter 单独 field-update 更稳；现有看板迁移可复用本段。
 FMT="yyyy-MM-dd HH:mm"
+# lark-cli 1.0.33 实测：日期显示格式在 style.format（**不是** property.date_formatter，后者被 API 静默忽略）；
+# 字段名键是 name（非 field_name）；field-update 全量 PUT 且需 --as user + --yes；created_at 系统字段也可改。
+# OpenAPIUpdateField 有限流（code 800004135），连发会被拒——逐字段间隔 + 撞限流退避重试。
 set_fmt(){ # <table_id> <field_name> <type: datetime|created_at>
-  lark-cli base +field-update --base-token "$BOARD_BASE" --table-id "$1" --field-id "$2" \
-    --json "$(jq -nc --arg n "$2" --arg t "$3" --arg f "$FMT" '{field_name:$n,type:$t,property:{date_formatter:$f}}')" --yes >/dev/null \
-    || echo "WARN: 设置「$2」显示格式失败（可在 bitable 表头手动改为 $FMT）" >&2
+  local i out
+  for i in 1 2 3; do
+    out=$(lark-cli base +field-update --base-token "$BOARD_BASE" --table-id "$1" --field-id "$2" \
+      --json "$(jq -nc --arg n "$2" --arg t "$3" --arg f "$FMT" '{name:$n,type:$t,style:{format:$f}}')" --as user --yes 2>&1)
+    echo "$out" | jq -e '.ok==true' >/dev/null 2>&1 && { sleep 1; return 0; }
+    echo "$out" | grep -q 800004135 || { echo "WARN: 设置「$2」显示格式失败（可在 bitable 表头手动改为 $FMT）：$out" >&2; return 0; }
+    sleep 2   # 限流退避后重试
+  done
+  echo "WARN: 设置「$2」显示格式重试仍限流（可在 bitable 表头手动改为 $FMT）" >&2
 }
 set_fmt "$TBL_PROJECTS" "创建时间" "created_at"
 set_fmt "$TBL_PROJECTS" "完成时间" "datetime"
