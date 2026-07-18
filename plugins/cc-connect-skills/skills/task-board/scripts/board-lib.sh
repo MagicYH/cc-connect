@@ -37,6 +37,34 @@ role_label(){
 }
 NOW(){ date "+%Y-%m-%d %H:%M:%S"; }
 
+# cc_data_dir → cc-connect 数据目录（config.toml 顶层 data_dir，展开 ~/$VAR；缺省 ~/.cc-connect）。
+# 与 board-init-project.sh 定位 workspace_bindings.json 的口径一致。config 缺失/无 python 时静默回退默认。
+cc_data_dir(){
+  local cfg="${CC_CONNECT_CONFIG:-$HOME/.cc-connect/config.toml}" dd=""
+  if [ -f "$cfg" ] && command -v python3 >/dev/null 2>&1; then
+    dd=$(python3 - "$cfg" <<'PY' 2>/dev/null || true
+import os,re,sys
+try: t=open(sys.argv[1],encoding="utf-8").read()
+except OSError: t=""
+top=re.split(r'(?m)^\s*\[\[projects\]\]\s*$',t,1)[0]
+m=re.search(r'(?m)^\s*data_dir\s*=\s*"([^"]*)"',top)
+print(os.path.expanduser(os.path.expandvars(m.group(1))) if m and m.group(1) else "")
+PY
+)
+  fi
+  [ -n "$dd" ] && echo "$dd" || echo "$HOME/.cc-connect"
+}
+
+# resolve_workspace <chatID> → 当前角色($ROLE)在此群绑定的 workspace 物理路径；未绑定/无文件输出空串。
+resolve_workspace(){
+  local chat="$1" wb
+  [ -n "$chat" ] || return 0
+  wb="$(cc_data_dir)/workspace_bindings.json"
+  [ -f "$wb" ] || return 0
+  jq -r --arg role "project:$ROLE" --arg c "feishu:$chat" --arg lc "lark:$chat" \
+    '((.[$role][$c].workspace // .[$role][$lc].workspace) // "")' "$wb" 2>/dev/null || true
+}
+
 # _json —— 剥掉 lark-cli 偶发打在 stdout 前面的非 JSON 横幅（如 `[lark-cli] [WARN] proxy detected...`
 #          或版本更新提示）。只从**第一行以 { 开头**处起——这些 base/im 命令顶层都返回对象 `{...}`，
 #          绝不返回裸数组；而横幅行以 `[` 开头（`[lark-cli]…`），旧的 `/^[[{]/` 会把横幅当成 JSON 起点

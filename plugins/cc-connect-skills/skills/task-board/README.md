@@ -64,7 +64,7 @@ scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任�
 角色传纯名（如 `tester`）即可，脚本自动映射为 `Zero (tester)` 标签。
 
 **方式三：让 team-leader 拆解**（只有需求、没想好任务时）
-在项目群 @team-leader 描述需求，它会先做需求分析与技术设计（SKILL.md『项目启动·设计先行』）：简单需求产出 `docs/design.md` 公示后直接拆解开工；复杂需求走 superpowers 设计链并 @你确认设计后才开工。
+在项目群 @team-leader 描述需求，它会先做需求分析与技术设计（SKILL.md『项目启动·设计先行』）：简单需求产出 `.board/design.md`（工作区内的中间产物，不进 git、收尾自动清理）公示后直接拆解开工；复杂需求走 superpowers 设计链并 @你确认设计后才开工。
 
 **方式四：对 Boss 说一句话开全新项目**（自动建新工作群）
 在管理群 @boss："开新项目：<项目名>，需求=<一句话需求>"。Boss 会运行 `board-init-project.sh` 自动完成：建新群、拉齐角色 bot 与你、写项目行、绑定 workspace、@team-leader 起步——每个项目一个独立工作群。TL 起步后同方式三：先设计再派发，复杂项目会等你确认设计。

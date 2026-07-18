@@ -91,10 +91,13 @@ WORKDIR=$(cd "$WORKDIR" && pwd -P)
 ( cd "$WORKDIR" && git init -q 2>/dev/null || true )
 echo "workdir=$WORKDIR"
 
-# 3b) 完整需求原文落文档（跨角色以文档为准；TL 从此读完整需求做设计，避免 @消息/字段被截断而丢意图）
-mkdir -p "$WORKDIR/docs"
-printf '# 需求（发起人原文）\n\n%s\n' "$REQ" > "$WORKDIR/docs/requirement.md"
-echo "requirement_doc=$WORKDIR/docs/requirement.md"
+# 3b) 完整需求原文落 .board/（agent 间通信的中间产物：跟 feature 放一起、但不进 git、收尾自动清理）。
+#     .board/.gitignore 用通配自忽略——整个 .board/ 对 git 隐形，既不污染交付仓库、也不动仓库自身 .gitignore
+#     （已有仓库路由亦安全）。TL 从此读完整需求做设计，避免 @消息/字段被截断而丢意图。
+mkdir -p "$WORKDIR/.board"
+printf '*\n' > "$WORKDIR/.board/.gitignore"
+printf '# 需求（发起人原文）\n\n%s\n' "$REQ" > "$WORKDIR/.board/requirement.md"
+echo "requirement_doc=$WORKDIR/.board/requirement.md"
 
 # 4) 逐个 @bot 绑定 workspace（board-send 以 CC_PROJECT 身份发；bot 处理需数秒）
 SEND="$(dirname "$0")/board-send.sh"
@@ -130,8 +133,8 @@ fi
 lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_PROJECTS" --record-id "$PRID" \
   --json '{"项目状态":"进行中"}' --as user >/dev/null
 
-# 7) @team-leader 起步（完整需求以 docs/requirement.md 为准；消息附原文做冗余，二者皆为完整原文）
-"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」。完整需求（发起人原文）已写入工作目录 docs/requirement.md，**以该文档全文为准，勿凭节选臆测或自行删减**。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先通读 docs/requirement.md 全文，再做需求分析与技术设计，然后拆解派发。
+# 7) @team-leader 起步（完整需求以 .board/requirement.md 为准；消息附原文做冗余，二者皆为完整原文）
+"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」。完整需求（发起人原文）已写入工作目录 .board/requirement.md，**以该文档全文为准，勿凭节选臆测或自行删减**。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先通读 .board/requirement.md 全文，再做需求分析与技术设计，然后拆解派发。
 
 需求原文：
 ${REQ}" >/dev/null

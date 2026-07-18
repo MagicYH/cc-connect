@@ -71,6 +71,32 @@ func TestBoardCompleteProjectFailsWhenProjectNameIsAmbiguous(t *testing.T) {
 	harness.assertNoUpsert()
 }
 
+func TestBoardCompleteProjectCleansGitignoredBoardArtifacts(t *testing.T) {
+	records := `{"data":{"fields":["主任务名","项目状态","工作群","完成时间"],"record_id_list":["rec_project"],"data":[["proj-clean","进行中",[{"id":"oc_test_chat","name":"proj"}],null]]}}`
+	harness := newBoardCompleteProjectHarness(t, records)
+	tempDir := filepath.Dir(harness.upsertArgs)
+	workDir := filepath.Join(tempDir, "work")
+	board := filepath.Join(workDir, ".board")
+	mustMkdirAll(t, board)
+	writeFile(t, filepath.Join(board, "requirement.md"), "orig requirement", 0o644)
+	writeFile(t, filepath.Join(board, ".gitignore"), "*\n", 0o644)
+	// 完成角色(team-leader)在此群绑定的 workspace
+	bindings := `{"project:team-leader":{"feishu:oc_test_chat":{"workspace":"` + workDir + `"}}}`
+	writeFile(t, filepath.Join(harness.homeDir, ".cc-connect", "workspace_bindings.json"), bindings, 0o644)
+
+	output, err := harness.run("proj-clean")
+	if err != nil {
+		t.Fatalf("expected completion to succeed; output:\n%s", output)
+	}
+	if !strings.Contains(output, "PROJECT_DONE rec_project") {
+		t.Fatalf("expected PROJECT_DONE; output:\n%s", output)
+	}
+	// 任务最终结束时，中间产物 .board/ 被清理
+	if _, statErr := os.Stat(board); !os.IsNotExist(statErr) {
+		t.Fatalf("expected .board artifacts removed on completion; stat err=%v", statErr)
+	}
+}
+
 type boardCompleteProjectHarness struct {
 	t          *testing.T
 	homeDir    string

@@ -41,7 +41,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 1. 自建设计任务并认领：`board-new-task.sh <主任务> <工作群> team-leader "需求分析与技术设计"` → `board-claim.sh`。
 2. 评估复杂度，满足任一即**复杂**：需要架构/技术选型；预计子任务 >3 个；跨多模块或服务；需求含糊、有关键取舍需发起人定夺。否则**简单**。
-3. **简单**：在工作目录写 `docs/design.md`（需求理解 / 方案 / 任务拆解 / 各任务验收标准）→ `board-send.sh` 向工作群公示设计要点+文档路径（不 @）→ `board-done.sh <rid> <nonce> docs/design.md --next developer "<首个开发子任务>"` 直接开工。
+3. **简单**：在工作区写 `.board/design.md`（需求理解 / 方案 / 任务拆解 / 各任务验收标准）→ `board-send.sh` 向工作群公示设计要点+文档路径（不 @）→ `board-done.sh <rid> <nonce> .board/design.md --next developer "<首个开发子任务>"` 直接开工。
 4. **复杂**：调用 superpowers 技能链（brainstorming → writing-plans，自主推进；歧义与关键取舍**列成问题清单写进设计**，不臆测）产出设计与计划文档 → `board-done.sh <rid> <nonce> <设计文档路径> --next team-leader "待发起人<open_id>确认设计后拆解派发（设计=<路径>）"` → `board-send.sh <工作群> <发起人open_id> "<设计要点+路径+问题清单，请确认后开工>"`。发起人 open_id 取自 kickoff 消息。
 5. **确认跟进任务规则**（子任务含「待发起人…确认」的行）：
    - 本次唤醒消息就是发起人的回复 → 认领：确认则 `--next developer <首个开发子任务>` 开工；有修改意见则按意见修订设计后重复第 4 步收尾。
@@ -53,7 +53,9 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 - **消息只用 board-send**（自己 app 身份、token 不落盘）；@ 只用于派发与求助，其余回复不得含 `<at>`（防回环）。
 - **派发用角色键**：`--next`/`new-task` 的 `<角色>` 只能是 `team-leader`/`developer`/`tester`/`reviewer`（**角色键，不是 Bot 显示名**如 Gamma/Delta；人类说「@Gamma」时你要翻译成 `reviewer`）。脚本已归一化并对无法识别的值报错。`--next` 正常派**别的角色**（交接）；给自己（同角色）**仅限设计立项 / 等人类确认这类"停下等外部"场景**（不是把自己的连续开发拆成多任务），脚本对同角色不 @ 自己。
-- **跨角色靠文档传递，不靠群消息**：每次交付（`board-done`）必须有**文档产物**，`<产出>` 传该文档路径（不是一句话备注）。关键信息——设计方案 / 实现说明与改动点与如何运行 / 验收标准 / 测试结果 / 遗留与风险——**必须写进工作目录的文档**；群消息只做提示、不承载事实，**下游角色以文档为准开工**。例：设计→`docs/design.md`（复杂再加 plan）；开发→`docs/dev-notes.md`；测试→`docs/test-report.md`；评审→结论写入计划/评审文档。
+- **跨角色靠文档传递，不靠群消息**：每次交付（`board-done`）必须有**文档产物**，`<产出>` 传该文档路径（不是一句话备注）。关键信息——设计方案 / 实现说明与改动点与如何运行 / 验收标准 / 测试结果 / 遗留与风险——**必须写进工作区的文档**；群消息只做提示、不承载事实，**下游角色以文档为准开工**。区分两类落点：
+  - **中间产物写进 `.board/`**（工作区根目录、随 feature、已 gitignore 不进 git，项目收尾由 `board-complete-project.sh` 自动清理）：设计→`.board/design.md`；开发说明→`.board/dev-notes.md`；测试报告→`.board/test-report.md`；评审结论同理。这些是 agent 间协作的脚手架，**不得**写进会入 git 的 `docs/`，以免污染交付仓库。
+  - **正式交付物走正常提交路径**（会进 git、留存）：产品代码、`README` 等产品文档。复杂项目走 superpowers 设计链时，其 `docs/superpowers/specs|plans/…` 即正式设计/计划产物，直接用作 `board-done` 的 `<产出>` 路径，无需在 `.board/` 另写一份。
 - **严禁**任何 `lark-cli auth` 操作/切 app/改 `~/.lark-cli/config.json`；遇认证错误如实报告并停止。
 - **忽略其它任务管理类 skill**（如 task-management）——看板任务只走本技能。
 

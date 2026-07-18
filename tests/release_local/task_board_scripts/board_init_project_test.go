@@ -135,6 +135,49 @@ func TestBoardInitProjectQuotesWorkspacePathInRouteMessage(t *testing.T) {
 	}
 }
 
+func TestBoardInitProjectWritesRequirementToGitignoredBoardDir(t *testing.T) {
+	h := newBoardInitHarness(t)
+	workDir := filepath.Join(h.tempDir, "work", "demo")
+	writeInitBoardEnv(t, h.homeDir, h.tempDir)
+	writeInitConfig(t, h.homeDir, "feishu")
+	writeWorkspaceBindings(t, filepath.Join(h.homeDir, ".cc-connect", "workspace_bindings.json"), map[string]string{
+		"team-leader": workDir,
+		"developer":   workDir,
+		"tester":      workDir,
+		"reviewer":    workDir,
+	}, "feishu", "oc_test_chat")
+	writeInitLarkCli(t, h.binDir, "")
+
+	requirement := "第一行需求\n第二行需求：完整意图必须保留"
+	out, err := h.run("developer", "demo-project", requirement, workDir)
+	if err != nil {
+		t.Fatalf("expected init to succeed with full bindings; output:\n%s", out)
+	}
+
+	// 中间产物（Boss→TL 需求原文）落在 gitignore 的 .board/，不落会入 git 的 docs/
+	reqDoc := filepath.Join(workDir, ".board", "requirement.md")
+	got := readOptionalFile(t, reqDoc)
+	if !strings.Contains(got, "第二行需求：完整意图必须保留") {
+		t.Fatalf("expected full requirement in %s; got:\n%s", reqDoc, got)
+	}
+	if _, statErr := os.Stat(filepath.Join(workDir, "docs", "requirement.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("must not write requirement into committed docs/; stat err=%v", statErr)
+	}
+	// .board/ 自忽略：内含通配 gitignore，确保中间产物永不进 git（且不动仓库自身 .gitignore）
+	gi := readOptionalFile(t, filepath.Join(workDir, ".board", ".gitignore"))
+	if strings.TrimSpace(gi) != "*" {
+		t.Fatalf("expected .board/.gitignore to ignore everything; got %q", gi)
+	}
+	// @TL 起步消息以 .board/requirement.md 为准
+	sends := readOptionalFile(t, h.sendLog)
+	if !strings.Contains(sends, ".board/requirement.md") {
+		t.Fatalf("expected TL message to reference .board/requirement.md; sends:\n%s", sends)
+	}
+	if strings.Contains(sends, "docs/requirement.md") {
+		t.Fatalf("TL message must not reference committed docs/requirement.md; sends:\n%s", sends)
+	}
+}
+
 type boardInitHarness struct {
 	tempDir   string
 	homeDir   string
