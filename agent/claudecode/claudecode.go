@@ -1593,6 +1593,16 @@ func encodeClaudeProjectKey(absPath string) string {
 	return result.String()
 }
 
+func equivalentClaudeProjectPaths(path string) []string {
+	paths := []string{path}
+	if strings.HasPrefix(path, "/private/var/") {
+		paths = append(paths, strings.TrimPrefix(path, "/private"))
+	} else if strings.HasPrefix(path, "/var/") {
+		paths = append(paths, "/private"+path)
+	}
+	return paths
+}
+
 // findProjectDir locates the Claude Code session directory for a given work dir.
 // Claude Code stores sessions at ~/.claude/projects/{projectKey}/ where projectKey
 // is derived from the absolute path. On Windows, the key format may vary (colon
@@ -1612,16 +1622,19 @@ func findProjectDir(homeDir, absWorkDir string) string {
 
 	// Build candidate keys: different ways Claude Code might encode the path.
 	// Primary encoding: Claude Code's actual algorithm (non-ASCII → "-")
-	candidates := []string{
-		encodeClaudeProjectKey(absWorkDir),
-		// Legacy candidates for backward compatibility
-		strings.ReplaceAll(absWorkDir, string(filepath.Separator), "-"),
-		strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(absWorkDir),
-		strings.NewReplacer("/", "-", "\\", "-", ":", "-", "_", "-").Replace(absWorkDir),
+	var candidates []string
+	for _, path := range equivalentClaudeProjectPaths(absWorkDir) {
+		candidates = append(candidates,
+			encodeClaudeProjectKey(path),
+			// Legacy candidates for backward compatibility.
+			strings.ReplaceAll(path, string(filepath.Separator), "-"),
+			strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(path),
+			strings.NewReplacer("/", "-", "\\", "-", ":", "-", "_", "-").Replace(path),
+		)
+		// Also try with forward slashes (config might use forward slashes on Windows).
+		fwd := strings.ReplaceAll(path, "\\", "/")
+		candidates = append(candidates, strings.ReplaceAll(fwd, "/", "-"))
 	}
-	// Also try with forward slashes (config might use forward slashes on Windows)
-	fwd := strings.ReplaceAll(absWorkDir, "\\", "/")
-	candidates = append(candidates, strings.ReplaceAll(fwd, "/", "-"))
 
 	for _, key := range candidates {
 		dir := filepath.Join(projectsBase, key)
@@ -1637,19 +1650,24 @@ func findProjectDir(homeDir, absWorkDir string) string {
 		return ""
 	}
 
-	// Use the primary encoding for comparison
-	encodedWorkDir := encodeClaudeProjectKey(absWorkDir)
+	// Use the primary encodings for comparison.
+	encodedWorkDirs := make([]string, 0, len(equivalentClaudeProjectPaths(absWorkDir)))
+	for _, path := range equivalentClaudeProjectPaths(absWorkDir) {
+		encodedWorkDirs = append(encodedWorkDirs, encodeClaudeProjectKey(path))
+	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		// Direct match with encoded key
-		if entry.Name() == encodedWorkDir {
-			return filepath.Join(projectsBase, entry.Name())
-		}
-		// Case-insensitive match for Windows compatibility
-		if strings.EqualFold(entry.Name(), encodedWorkDir) {
-			return filepath.Join(projectsBase, entry.Name())
+		for _, encodedWorkDir := range encodedWorkDirs {
+			// Direct match with encoded key.
+			if entry.Name() == encodedWorkDir {
+				return filepath.Join(projectsBase, entry.Name())
+			}
+			// Case-insensitive match for Windows compatibility.
+			if strings.EqualFold(entry.Name(), encodedWorkDir) {
+				return filepath.Join(projectsBase, entry.Name())
+			}
 		}
 	}
 

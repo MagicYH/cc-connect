@@ -28,20 +28,20 @@ type codexSession struct {
 	model         string
 	effort        string
 	mode          string
-	baseURL       string // provider base URL; passed as -c openai_base_url=<url>
-	modelProvider string // Codex model_provider name; passed as -c model_provider=<name>
+	baseURL       string   // provider base URL; passed as -c openai_base_url=<url>
+	modelProvider string   // Codex model_provider name; passed as -c model_provider=<name>
 	cliBin        string   // CLI binary, default "codex"
 	cliExtraArgs  []string // extra args from cli_path, prepended before exec args
 	extraEnv      []string
 	events        chan core.Event
-	threadID  atomic.Value // stores string — Codex thread_id
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	alive     atomic.Bool
-	closeOnce sync.Once
-	cmdMu     sync.Mutex
-	cmds      map[*exec.Cmd]struct{}
+	threadID      atomic.Value // stores string — Codex thread_id
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	alive         atomic.Bool
+	closeOnce     sync.Once
+	cmdMu         sync.Mutex
+	cmds          map[*exec.Cmd]struct{}
 
 	pendingMsgs []string // buffered agent_message texts awaiting classification
 
@@ -273,6 +273,9 @@ func (cs *codexSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 	defer func() {
 		defer cs.removeCmd(cmd)
 		if err := cmd.Wait(); err != nil {
+			if cs.ctx.Err() != nil {
+				return
+			}
 			stderrMsg := strings.TrimSpace(stderrBuf.String())
 			if stderrMsg != "" {
 				slog.Error("codexSession: process failed", "error", err, "stderr", stderrMsg)

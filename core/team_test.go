@@ -45,6 +45,24 @@ func TestTeamRegistry_Compose_InjectsRoster(t *testing.T) {
 	}
 }
 
+func TestTeamRegistry_RosterPrompt_ReturnsOnlyRoster(t *testing.T) {
+	r := NewTeamRegistry()
+	r.Add(TeamMember{Project: "leader", Team: "squad", MemberDescribe: "带队", OpenID: "ou_leader", AppName: "队长机器人"})
+	r.Add(TeamMember{Project: "dev", Team: "squad", MemberDescribe: "写代码", OpenID: "ou_dev", AppName: "开发机器人"})
+
+	out := r.RosterPrompt("leader", "squad", "带队")
+
+	if strings.Contains(out, "BASE PROMPT") {
+		t.Fatalf("roster-only prompt should not include a base prompt:\n%s", out)
+	}
+	if !strings.HasPrefix(out, TeamPromptMarker) {
+		t.Fatalf("roster-only prompt should start with marker, got:\n%s", out)
+	}
+	if !strings.Contains(out, "dev（飞书应用：开发机器人）：写代码") {
+		t.Fatalf("roster-only prompt missing teammate:\n%s", out)
+	}
+}
+
 func TestTeamRegistry_Compose_MissingOpenID(t *testing.T) {
 	r := NewTeamRegistry()
 	r.Add(TeamMember{Project: "a", Team: "t", MemberDescribe: "aa"})

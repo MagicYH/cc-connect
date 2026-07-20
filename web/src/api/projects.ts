@@ -19,11 +19,13 @@ export interface ProjectDetail {
   work_dir?: string;
   agent_mode?: string;
   system_prompt?: string;
+  append_system_prompt?: string;
   workspace_mode?: string;
   base_dir?: string;
   subscriptions_enabled?: boolean;
   team?: string;
   member_describe?: string;
+  team_roster_enabled?: boolean;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
@@ -54,11 +56,13 @@ export interface ProjectSettingsUpdate {
   mode?: string;
   agent_type?: string;
   system_prompt?: string;
+  append_system_prompt?: string;
   workspace_mode?: string;
   base_dir?: string;
   subscriptions_enabled?: boolean;
   team?: string;
   member_describe?: string;
+  team_roster_enabled?: boolean;
   show_context_indicator?: boolean;
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
@@ -82,7 +86,7 @@ export const updateProject = (name: string, body: ProjectSettingsUpdate) => api.
 // Optional overrides reflect unsaved editor state.
 export const previewSystemPrompt = (
   name: string,
-  body: { system_prompt?: string; team?: string; member_describe?: string },
+  body: { system_prompt?: string; append_system_prompt?: string; team?: string; member_describe?: string; team_roster_enabled?: boolean },
 ) => api.post<SystemPromptPreview>(`/projects/${name}/system-prompt-preview`, body);
 
 export const addPlatformToProject = (projectName: string, body: {

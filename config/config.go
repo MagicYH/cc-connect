@@ -468,12 +468,15 @@ type ProjectConfig struct {
 	// projects sharing the same Team value belong to the same team; at startup
 	// cc-connect injects a team roster (this member's describe plus every other
 	// member's role name, Feishu app name, open_id and describe) into the
-	// project's system_prompt. Setting Team requires MemberDescribe.
+	// project's append_system_prompt. Setting Team requires MemberDescribe.
 	Team string `toml:"team,omitempty"`
 	// MemberDescribe describes this member's function within the team. Required
-	// when Team is set; injected into system_prompt and shared with teammates.
+	// when Team is set; injected into append_system_prompt and shared with teammates.
 	MemberDescribe string `toml:"member_describe,omitempty"`
-	SkipGit        *bool  `toml:"skip_git,omitempty"`
+	// TeamRosterEnabled controls whether team roster is auto-injected into the
+	// appended system prompt. nil means enabled for backward compatibility.
+	TeamRosterEnabled *bool `toml:"team_roster_enabled,omitempty"`
+	SkipGit           *bool `toml:"skip_git,omitempty"`
 	// WorkspaceInitAllowLocalPaths allows /workspace init and the conversational
 	// init flow to bind existing local directories. Default false keeps init
 	// limited to git URLs; use /workspace bind or /workspace route for explicit
@@ -3068,6 +3071,8 @@ type ProjectSettingsUpdate struct {
 	PlatformAllowFrom    map[string]string
 	// SystemPrompt sets the project agent's system_prompt option (empty clears it).
 	SystemPrompt *string
+	// AppendSystemPrompt sets the project agent's append_system_prompt option (empty clears it).
+	AppendSystemPrompt *string
 	// WorkspaceMode sets the top-level project mode ("" for single, "multi-workspace").
 	// Distinct from Mode, which is the agent permission mode.
 	WorkspaceMode *string
@@ -3079,6 +3084,8 @@ type ProjectSettingsUpdate struct {
 	Team *string
 	// MemberDescribe sets this member's team-role description.
 	MemberDescribe *string
+	// TeamRosterEnabled controls automatic team roster append injection.
+	TeamRosterEnabled *bool
 }
 
 // SaveProjectSettings persists project-level settings and the global language to config.toml.
@@ -3182,6 +3189,17 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 				proj.Agent.Options["system_prompt"] = sp
 			}
 		}
+		if update.AppendSystemPrompt != nil {
+			if proj.Agent.Options == nil {
+				proj.Agent.Options = map[string]any{}
+			}
+			sp := strings.TrimSpace(*update.AppendSystemPrompt)
+			if sp == "" {
+				delete(proj.Agent.Options, "append_system_prompt")
+			} else {
+				proj.Agent.Options["append_system_prompt"] = sp
+			}
+		}
 		if update.WorkspaceMode != nil {
 			proj.Mode = strings.TrimSpace(*update.WorkspaceMode)
 		}
@@ -3193,6 +3211,10 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 		}
 		if update.MemberDescribe != nil {
 			proj.MemberDescribe = strings.TrimSpace(*update.MemberDescribe)
+		}
+		if update.TeamRosterEnabled != nil {
+			v := *update.TeamRosterEnabled
+			proj.TeamRosterEnabled = &v
 		}
 		if update.WorkDir != nil || update.Mode != nil {
 			if proj.Agent.Options == nil {
@@ -3287,6 +3309,9 @@ func GetProjectConfigDetails(projectName string) map[string]any {
 			if sp, ok := p.Agent.Options["system_prompt"].(string); ok && strings.TrimSpace(sp) != "" {
 				result["system_prompt"] = sp
 			}
+			if sp, ok := p.Agent.Options["append_system_prompt"].(string); ok && strings.TrimSpace(sp) != "" {
+				result["append_system_prompt"] = sp
+			}
 		}
 		// Workspace mode ("" for single, "multi-workspace") and its base_dir.
 		result["workspace_mode"] = p.Mode
@@ -3295,6 +3320,7 @@ func GetProjectConfigDetails(projectName string) map[string]any {
 		}
 		result["subscriptions_enabled"] = p.IsSubscriptionsEnabled()
 		result["team"] = p.Team
+		result["team_roster_enabled"] = p.TeamRosterEnabled == nil || *p.TeamRosterEnabled
 		if strings.TrimSpace(p.MemberDescribe) != "" {
 			result["member_describe"] = p.MemberDescribe
 		}

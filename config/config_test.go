@@ -339,6 +339,81 @@ func TestEffectiveDisplayQuiet(t *testing.T) {
 	}
 }
 
+func TestSaveProjectSettingsPromptFields(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := ConfigPath
+	ConfigPath = filepath.Join(dir, "config.toml")
+	t.Cleanup(func() { ConfigPath = oldPath })
+
+	base := `[[projects]]
+name = "demo"
+team = "dev-team"
+member_describe = "developer"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+system_prompt = "old system"
+append_system_prompt = "old append"
+
+[[projects.platforms]]
+type = "feishu"
+`
+	if err := os.WriteFile(ConfigPath, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	appendPrompt := "new append"
+	disabled := false
+	if err := SaveProjectSettings("demo", ProjectSettingsUpdate{
+		AppendSystemPrompt: &appendPrompt,
+		TeamRosterEnabled:  &disabled,
+	}); err != nil {
+		t.Fatalf("SaveProjectSettings() error = %v", err)
+	}
+
+	data, err := os.ReadFile(ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	proj := cfg.Projects[0]
+	if got, _ := proj.Agent.Options["append_system_prompt"].(string); got != appendPrompt {
+		t.Fatalf("append_system_prompt = %q, want %q", got, appendPrompt)
+	}
+	if proj.TeamRosterEnabled == nil || *proj.TeamRosterEnabled != false {
+		t.Fatalf("TeamRosterEnabled = %v, want false", proj.TeamRosterEnabled)
+	}
+
+	empty := ""
+	enabled := true
+	if err := SaveProjectSettings("demo", ProjectSettingsUpdate{
+		AppendSystemPrompt: &empty,
+		TeamRosterEnabled:  &enabled,
+	}); err != nil {
+		t.Fatalf("SaveProjectSettings(clear) error = %v", err)
+	}
+	data, err = os.ReadFile(ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = Config{}
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	proj = cfg.Projects[0]
+	if _, ok := proj.Agent.Options["append_system_prompt"]; ok {
+		t.Fatalf("append_system_prompt should be deleted when saved empty: %#v", proj.Agent.Options)
+	}
+	if proj.TeamRosterEnabled == nil || *proj.TeamRosterEnabled != true {
+		t.Fatalf("TeamRosterEnabled = %v, want true", proj.TeamRosterEnabled)
+	}
+}
+
 func TestEffectiveDisplay_ProjectOverride(t *testing.T) {
 	tru, fal := true, false
 	maxA, maxB := 100, 200

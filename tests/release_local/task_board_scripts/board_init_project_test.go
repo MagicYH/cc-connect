@@ -178,6 +178,37 @@ func TestBoardInitProjectWritesRequirementToGitignoredBoardDir(t *testing.T) {
 	}
 }
 
+func TestBoardInitProjectKickoffTellsTeamLeaderToRouteByComplexity(t *testing.T) {
+	h := newBoardInitHarness(t)
+	workDir := filepath.Join(h.tempDir, "work", "demo")
+	writeInitBoardEnv(t, h.homeDir, h.tempDir)
+	writeInitConfig(t, h.homeDir, "feishu")
+	writeWorkspaceBindings(t, filepath.Join(h.homeDir, ".cc-connect", "workspace_bindings.json"), map[string]string{
+		"team-leader": workDir,
+		"developer":   workDir,
+		"tester":      workDir,
+		"reviewer":    workDir,
+	}, "feishu", "oc_test_chat")
+	writeInitLarkCli(t, h.binDir, "")
+
+	out, err := h.run("boss", "demo-project", "建一个跟进单并通知相关人", workDir)
+	if err != nil {
+		t.Fatalf("expected init to succeed with full bindings; output:\n%s", out)
+	}
+
+	sends := readOptionalFile(t, h.sendLog)
+	for _, want := range []string{
+		"项目启动·先分流",
+		"目标明确",
+		"建单/查询/整理/通知/简单操作",
+		"brainstorming",
+	} {
+		if !strings.Contains(sends, want) {
+			t.Fatalf("expected kickoff message to contain %q; sends:\n%s", want, sends)
+		}
+	}
+}
+
 type boardInitHarness struct {
 	tempDir   string
 	homeDir   string

@@ -134,7 +134,7 @@ lark-cli base +record-upsert --base-token "$BOARD_BASE" --table-id "$TBL_PROJECT
   --json '{"项目状态":"进行中"}' --as user >/dev/null
 
 # 7) @team-leader 起步（完整需求以 .board/requirement.md 为准；消息附原文做冗余，二者皆为完整原文）
-"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」。完整需求（发起人原文）已写入工作目录 .board/requirement.md，**以该文档全文为准，勿凭节选臆测或自行删减**。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·设计先行』流程处理（主任务=${NAME}, 工作群=${CHAT}）：先通读 .board/requirement.md 全文，再做需求分析与技术设计，然后拆解派发。
+"$SEND" "$CHAT" "$BOT_OPENID_team_leader" "新项目「${NAME}」。完整需求（发起人原文）已写入工作目录 .board/requirement.md，**以该文档全文为准，勿凭节选臆测或自行删减**。工作群与看板已就绪、workspace 已绑定，发起人=${INITIATOR_OPENID:-$BOARD_WRITER_OPENID}。请按 task-board 技能『项目启动·先分流』处理（主任务=${NAME}, 工作群=${CHAT}）：先通读 .board/requirement.md 全文；目标明确、无需设计/取舍/多角色拆解的建单/查询/整理/通知/简单操作可直接开始；需要协作但需求清楚则轻量设计后派发；复杂、含糊或有关键取舍时才走 brainstorming → writing-plans，并在需要确认时 @发起人。
 
 需求原文：
 ${REQ}" >/dev/null
