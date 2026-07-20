@@ -11,7 +11,7 @@
       "name": "cc-connect-skills",
       "source": "./plugins/cc-connect-skills",
       "description": "Skills and tools for cc-connect development and operations",
-      "version": "0.1.0",
+      "version": "0.2.14",
       "author": {
         "name": "Hao Chen",
         "email": "chenhao.magic@bytedance.com"
