@@ -768,6 +768,18 @@ func TestCountMarkdownTables(t *testing.T) {
 	}
 }
 
+func TestBuildReplyContent_PreservesCompleteCardJSON(t *testing.T) {
+	content := `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"**hello**"}]}}`
+
+	msgType, body := buildReplyContent(content, true)
+	if msgType != larkim.MsgTypeInteractive {
+		t.Fatalf("buildReplyContent() msgType = %s, want %s", msgType, larkim.MsgTypeInteractive)
+	}
+	if body != content {
+		t.Fatalf("buildReplyContent() body = %s, want original card JSON", body)
+	}
+}
+
 func TestBuildReplyContent_FallbackWhenManyTables(t *testing.T) {
 	// Build content with 6 tables (exceeds the 5-table card limit).
 	var sb strings.Builder

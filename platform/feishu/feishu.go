@@ -3068,6 +3068,10 @@ func buildReplyContent(content string, useInteractiveCard bool) (msgType string,
 	// Redact email addresses before sending to prevent Feishu content audit
 	// rejection (code=230028: "contain sensitive data: EMAIL_ADDRESS").
 	content = emailAddressRe.ReplaceAllString(content, "[email redacted]")
+	if isCardJSON(content) {
+		slog.Debug("feishu send debug", "msg_type", larkim.MsgTypeInteractive, "body", content)
+		return larkim.MsgTypeInteractive, content
+	}
 	if !containsMarkdown(content) {
 		if containsAtTag(content) {
 			// Plain text MsgTypeText doesn't support <at> tags properly;
