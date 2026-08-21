@@ -28,20 +28,20 @@ type codexSession struct {
 	model         string
 	effort        string
 	mode          string
-	baseURL       string // provider base URL; passed as -c openai_base_url=<url>
-	modelProvider string // Codex model_provider name; passed as -c model_provider=<name>
+	baseURL       string   // provider base URL; passed as -c openai_base_url=<url>
+	modelProvider string   // Codex model_provider name; passed as -c model_provider=<name>
 	cliBin        string   // CLI binary, default "codex"
 	cliExtraArgs  []string // extra args from cli_path, prepended before exec args
 	extraEnv      []string
 	events        chan core.Event
-	threadID  atomic.Value // stores string — Codex thread_id
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	alive     atomic.Bool
-	closeOnce sync.Once
-	cmdMu     sync.Mutex
-	cmds      map[*exec.Cmd]struct{}
+	threadID      atomic.Value // stores string — Codex thread_id
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	alive         atomic.Bool
+	closeOnce     sync.Once
+	cmdMu         sync.Mutex
+	cmds          map[*exec.Cmd]struct{}
 
 	pendingMsgs []string // buffered agent_message texts awaiting classification
 
@@ -56,12 +56,14 @@ type codexSession struct {
 	sessionFile  string
 }
 
-var codexSessionCloseTimeout = 8 * time.Second
-var codexSessionForceKillWait = 2 * time.Second
-var codexRuntimeConfigCacheTTL = 5 * time.Second
-var codexRuntimeConfigTimeout = 1500 * time.Millisecond
-var codexContextUsageRetryDelay = 50 * time.Millisecond
-var codexContextUsageRetryCount = 4
+var (
+	codexSessionCloseTimeout    = 8 * time.Second
+	codexSessionForceKillWait   = 2 * time.Second
+	codexRuntimeConfigCacheTTL  = 5 * time.Second
+	codexRuntimeConfigTimeout   = 1500 * time.Millisecond
+	codexContextUsageRetryDelay = 50 * time.Millisecond
+	codexContextUsageRetryCount = 4
+)
 
 func newCodexSession(ctx context.Context, cliBin string, cliExtraArgs []string, workDir, model, effort, mode, resumeID, baseURL string, extraEnv []string, modelProvider string) (*codexSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
@@ -273,6 +275,9 @@ func (cs *codexSession) readLoop(cmd *exec.Cmd, stdout io.ReadCloser, stderrBuf 
 	defer func() {
 		defer cs.removeCmd(cmd)
 		if err := cmd.Wait(); err != nil {
+			if cs.ctx.Err() != nil {
+				return
+			}
 			stderrMsg := strings.TrimSpace(stderrBuf.String())
 			if stderrMsg != "" {
 				slog.Error("codexSession: process failed", "error", err, "stderr", stderrMsg)
@@ -527,7 +532,8 @@ func (cs *codexSession) handleItemCompleted(raw map[string]any) {
 		code := int(exitCode)
 		success := codexToolSuccess(status, &code)
 
-		slog.Debug("codexSession: command completed",
+		slog.Debug(
+			"codexSession: command completed",
 			"command", truncate(command, 100),
 			"status", status,
 			"exit_code", code,
@@ -552,7 +558,8 @@ func (cs *codexSession) handleItemCompleted(raw map[string]any) {
 		status, _ := item["status"].(string)
 		output, _ := item["output"].(string)
 		success := codexToolSuccess(status, nil)
-		slog.Debug("codexSession: function_call completed",
+		slog.Debug(
+			"codexSession: function_call completed",
 			"name", name, "status", status, "output_len", len(output),
 		)
 		evt := core.Event{
