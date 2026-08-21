@@ -105,6 +105,8 @@ type cujAgentSession struct {
 
 	// observed
 	sentPrompts []string
+	lastImages  []ImageAttachment
+	lastFiles   []FileAttachment
 	closeCount  int
 }
 
@@ -125,9 +127,11 @@ func newCUJAgentSession() *cujAgentSession {
 	}
 }
 
-func (s *cujAgentSession) Send(prompt string, _ []ImageAttachment, _ []FileAttachment) error {
+func (s *cujAgentSession) Send(prompt string, images []ImageAttachment, files []FileAttachment) error {
 	s.mu.Lock()
 	s.sentPrompts = append(s.sentPrompts, prompt)
+	s.lastImages = append([]ImageAttachment(nil), images...)
+	s.lastFiles = append([]FileAttachment(nil), files...)
 	reply := s.reply
 	delay := s.delayMs
 	override := s.nextEventOverride
@@ -153,7 +157,9 @@ func (s *cujAgentSession) Send(prompt string, _ []ImageAttachment, _ []FileAttac
 func (s *cujAgentSession) RespondPermission(_ string, _ PermissionResult) error { return nil }
 func (s *cujAgentSession) Events() <-chan Event                                 { return s.events }
 func (s *cujAgentSession) CurrentSessionID() string                             { return "cuj-agent-session" }
-func (s *cujAgentSession) Alive() bool                                          { return !s.closed.Get() }
+
+func (s *cujAgentSession) Alive() bool { return !s.closed.Get() }
+
 func (s *cujAgentSession) Close() error {
 	s.closed.Set(true)
 	s.mu.Lock()
@@ -168,6 +174,12 @@ func (s *cujAgentSession) getSentPrompts() []string {
 	out := make([]string, len(s.sentPrompts))
 	copy(out, s.sentPrompts)
 	return out
+}
+
+func (s *cujAgentSession) attachmentCounts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.lastImages), len(s.lastFiles)
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,8 +1102,8 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 	msg := &Message{
 		SessionKey: "test:img", Platform: "test", MessageID: "img1",
 		UserID: "img", UserName: "img",
-		Content: "what is in this image",
-		Images:  []ImageAttachment{{MimeType: "image/png", Data: []byte("\x89PNG fake"), FileName: "chart.png"}},
+		Content:  "what is in this image",
+		Images:   []ImageAttachment{{MimeType: "image/png", Data: []byte("\x89PNG fake"), FileName: "chart.png"}},
 		ReplyCtx: "ctx",
 	}
 	e.ReceiveMessage(plat, msg)
@@ -1099,10 +1111,16 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	for {
 		agent.mu.Lock()
-		n := len(agent.sessions)
+		var sess *cujAgentSession
+		if len(agent.sessions) > 0 {
+			sess = agent.sessions[0]
+		}
 		agent.mu.Unlock()
-		if n > 0 {
-			break
+		if sess != nil {
+			images, _ := sess.attachmentCounts()
+			if images == 1 && len(plat.getSent()) > 0 {
+				return
+			}
 		}
 		select {
 		case <-deadline:
@@ -1154,8 +1172,8 @@ func TestCUJ_A5_FileReachesAgent(t *testing.T) {
 	msg := &Message{
 		SessionKey: "test:file", Platform: "test", MessageID: "f1",
 		UserID: "file", UserName: "file",
-		Content: "read this file",
-		Files:   []FileAttachment{{MimeType: "text/plain", Data: []byte("hello world"), FileName: "note.txt"}},
+		Content:  "read this file",
+		Files:    []FileAttachment{{MimeType: "text/plain", Data: []byte("hello world"), FileName: "note.txt"}},
 		ReplyCtx: "ctx",
 	}
 	e.ReceiveMessage(plat, msg)
@@ -1163,10 +1181,16 @@ func TestCUJ_A5_FileReachesAgent(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	for {
 		agent.mu.Lock()
-		n := len(agent.sessions)
+		var sess *cujAgentSession
+		if len(agent.sessions) > 0 {
+			sess = agent.sessions[0]
+		}
 		agent.mu.Unlock()
-		if n > 0 {
-			return
+		if sess != nil {
+			_, files := sess.attachmentCounts()
+			if files == 1 && len(plat.getSent()) > 0 {
+				return
+			}
 		}
 		select {
 		case <-deadline:
@@ -2008,4 +2032,3 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 		t.Fatal("platB received no replies")
 	}
 }
-
