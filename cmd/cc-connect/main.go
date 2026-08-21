@@ -392,7 +392,7 @@ func main() {
 		}
 	}
 
-	// Phase 2: create agents (with team-composed system_prompt) and engines.
+	// Phase 2: create agents (with team roster appended) and engines.
 	for i := range cfg.Projects {
 		proj := cfg.Projects[i]
 		// Inject project-level run_as_user / run_as_env into the agent's
@@ -407,15 +407,19 @@ func main() {
 				proj.Agent.Options["run_as_env"] = proj.RunAsEnv
 			}
 		}
-		// Compose the team roster into system_prompt for team members.
-		if proj.Team != "" {
+		// Compose the team roster into append_system_prompt for team members.
+		if proj.Team != "" && (proj.TeamRosterEnabled == nil || *proj.TeamRosterEnabled) {
 			if proj.Agent.Options == nil {
 				proj.Agent.Options = map[string]any{}
 			}
-			base, _ := proj.Agent.Options["system_prompt"].(string)
-			composed := teamRegistry.Compose(proj.Name, proj.Team, proj.MemberDescribe, base)
-			proj.Agent.Options["system_prompt"] = composed
-			slog.Info("team: injected roster into system_prompt", "project", proj.Name, "team", proj.Team, "prompt_len", len(composed))
+			base, _ := proj.Agent.Options["append_system_prompt"].(string)
+			roster := teamRegistry.RosterPrompt(proj.Name, proj.Team, proj.MemberDescribe)
+			if strings.TrimSpace(base) == "" {
+				proj.Agent.Options["append_system_prompt"] = roster
+			} else {
+				proj.Agent.Options["append_system_prompt"] = strings.TrimRight(base, "\n") + "\n\n" + roster
+			}
+			slog.Info("team: injected roster into append_system_prompt", "project", proj.Name, "team", proj.Team, "prompt_len", len(roster))
 		}
 		agent, err := core.CreateAgent(proj.Agent.Type, buildAgentOptions(cfg.DataDir, proj))
 		if err != nil {
@@ -1238,11 +1242,13 @@ func main() {
 				InjectSender:         u.InjectSender,
 				PlatformAllowFrom:    u.PlatformAllowFrom,
 				SystemPrompt:         u.SystemPrompt,
+				AppendSystemPrompt:   u.AppendSystemPrompt,
 				WorkspaceMode:        u.WorkspaceMode,
 				BaseDir:              u.BaseDir,
 				SubscriptionsEnabled: u.SubscriptionsEnabled,
 				Team:                 u.Team,
 				MemberDescribe:       u.MemberDescribe,
+				TeamRosterEnabled:    u.TeamRosterEnabled,
 			})
 		})
 		mgmtSrv.SetGetProjectConfig(config.GetProjectConfigDetails)

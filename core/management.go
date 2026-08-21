@@ -34,11 +34,13 @@ type ProjectSettingsUpdate struct {
 	InjectSender         *bool
 	PlatformAllowFrom    map[string]string
 	SystemPrompt         *string
+	AppendSystemPrompt   *string
 	WorkspaceMode        *string
 	BaseDir              *string
 	SubscriptionsEnabled *bool
 	Team                 *string
 	MemberDescribe       *string
+	TeamRosterEnabled    *bool
 }
 
 // ManagementServer provides an HTTP REST API for external management tools
@@ -761,11 +763,13 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			InjectSender         *bool             `json:"inject_sender"`
 			PlatformAllowFrom    map[string]string `json:"platform_allow_from"`
 			SystemPrompt         *string           `json:"system_prompt"`
+			AppendSystemPrompt   *string           `json:"append_system_prompt"`
 			WorkspaceMode        *string           `json:"workspace_mode"`
 			BaseDir              *string           `json:"base_dir"`
 			SubscriptionsEnabled *bool             `json:"subscriptions_enabled"`
 			Team                 *string           `json:"team"`
 			MemberDescribe       *string           `json:"member_describe"`
+			TeamRosterEnabled    *bool             `json:"team_roster_enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -818,7 +822,7 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 		restartRequired := false
 		// These fields are only consumed at engine startup, so a restart is
 		// required for the change to take effect.
-		if body.SystemPrompt != nil || body.WorkspaceMode != nil || body.BaseDir != nil || body.SubscriptionsEnabled != nil || body.Team != nil || body.MemberDescribe != nil {
+		if body.SystemPrompt != nil || body.AppendSystemPrompt != nil || body.WorkspaceMode != nil || body.BaseDir != nil || body.SubscriptionsEnabled != nil || body.Team != nil || body.MemberDescribe != nil || body.TeamRosterEnabled != nil {
 			restartRequired = true
 		}
 		if body.AgentType != nil && *body.AgentType != e.agent.Name() {
@@ -851,11 +855,13 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 				InjectSender:         body.InjectSender,
 				PlatformAllowFrom:    body.PlatformAllowFrom,
 				SystemPrompt:         body.SystemPrompt,
+				AppendSystemPrompt:   body.AppendSystemPrompt,
 				WorkspaceMode:        body.WorkspaceMode,
 				BaseDir:              body.BaseDir,
 				SubscriptionsEnabled: body.SubscriptionsEnabled,
 				Team:                 body.Team,
 				MemberDescribe:       body.MemberDescribe,
+				TeamRosterEnabled:    body.TeamRosterEnabled,
 			}
 			if err := m.saveProjectSettings(name, patch); err != nil {
 				slog.Warn("management: failed to persist project settings", "project", name, "error", err)
@@ -892,29 +898,36 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 }
 
 // handleProjectSystemPromptPreview returns the base system_prompt and the
-// composed prompt with the auto-injected team roster. It defaults to the
-// persisted config values, and accepts optional overrides (system_prompt / team
-// / member_describe) via POST body so the WebUI can preview unsaved edits.
+// composed prompt fragments with append_system_prompt and optional team roster.
+// It defaults to the persisted config values, and accepts optional overrides via
+// POST body so the WebUI can preview unsaved edits.
 func (m *ManagementServer) handleProjectSystemPromptPreview(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		mgmtError(w, http.StatusMethodNotAllowed, "GET or POST only")
 		return
 	}
 
-	var base, team, memberDescribe string
+	var base, appendPrompt, team, memberDescribe string
+	teamRosterEnabled := true
 	if m.getProjectConfig != nil {
 		if cfg := m.getProjectConfig(name); cfg != nil {
 			base, _ = cfg["system_prompt"].(string)
+			appendPrompt, _ = cfg["append_system_prompt"].(string)
 			team, _ = cfg["team"].(string)
 			memberDescribe, _ = cfg["member_describe"].(string)
+			if v, ok := cfg["team_roster_enabled"].(bool); ok {
+				teamRosterEnabled = v
+			}
 		}
 	}
 
 	if r.Method == http.MethodPost {
 		var body struct {
-			SystemPrompt   *string `json:"system_prompt"`
-			Team           *string `json:"team"`
-			MemberDescribe *string `json:"member_describe"`
+			SystemPrompt       *string `json:"system_prompt"`
+			AppendSystemPrompt *string `json:"append_system_prompt"`
+			Team               *string `json:"team"`
+			MemberDescribe     *string `json:"member_describe"`
+			TeamRosterEnabled  *bool   `json:"team_roster_enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -923,15 +936,28 @@ func (m *ManagementServer) handleProjectSystemPromptPreview(w http.ResponseWrite
 		if body.SystemPrompt != nil {
 			base = *body.SystemPrompt
 		}
+		if body.AppendSystemPrompt != nil {
+			appendPrompt = *body.AppendSystemPrompt
+		}
 		if body.Team != nil {
 			team = *body.Team
 		}
 		if body.MemberDescribe != nil {
 			memberDescribe = *body.MemberDescribe
 		}
+		if body.TeamRosterEnabled != nil {
+			teamRosterEnabled = *body.TeamRosterEnabled
+		}
 	}
 
-	composed := m.teamRegistry.Compose(name, team, memberDescribe, base)
+	appendComposed := strings.TrimSpace(appendPrompt)
+	if teamRosterEnabled {
+		roster := m.teamRegistry.RosterPrompt(name, team, memberDescribe)
+		if roster != "" {
+			appendComposed = strings.TrimSpace(strings.TrimRight(appendComposed, "\n") + "\n\n" + roster)
+		}
+	}
+	composed := strings.TrimSpace(strings.TrimRight(base, "\n") + "\n\n" + appendComposed)
 	mgmtJSON(w, http.StatusOK, map[string]any{
 		"base":     base,
 		"team":     team,

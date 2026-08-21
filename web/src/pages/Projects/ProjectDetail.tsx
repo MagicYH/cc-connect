@@ -60,12 +60,14 @@ export default function ProjectDetail() {
   // these fields only when they actually change, so unrelated saves don't
   // spuriously demand a restart.
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [appendSystemPrompt, setAppendSystemPrompt] = useState('');
   const [workspaceMode, setWorkspaceMode] = useState('');
   const [baseDir, setBaseDir] = useState('');
   const [subscriptionsEnabled, setSubscriptionsEnabled] = useState(false);
   const [team, setTeam] = useState('');
   const [memberDescribe, setMemberDescribe] = useState('');
-  const [initial, setInitial] = useState({ systemPrompt: '', workspaceMode: '', baseDir: '', subscriptionsEnabled: false, team: '', memberDescribe: '' });
+  const [teamRosterEnabled, setTeamRosterEnabled] = useState(true);
+  const [initial, setInitial] = useState({ systemPrompt: '', appendSystemPrompt: '', workspaceMode: '', baseDir: '', subscriptionsEnabled: false, team: '', memberDescribe: '', teamRosterEnabled: true });
 
   // System prompt preview (base + auto-injected team roster)
   const [showPreview, setShowPreview] = useState(false);
@@ -158,18 +160,22 @@ export default function ProjectDetail() {
         setReplyFooter(proj.value.reply_footer !== false);
         setInjectSender(proj.value.inject_sender === true);
         const sp = proj.value.system_prompt || '';
+        const asp = proj.value.append_system_prompt || '';
         const wm = proj.value.workspace_mode || '';
         const bd = proj.value.base_dir || '';
         const subs = proj.value.subscriptions_enabled === true;
         const tm = proj.value.team || '';
         const md = proj.value.member_describe || '';
+        const tre = proj.value.team_roster_enabled !== false;
         setSystemPrompt(sp);
+        setAppendSystemPrompt(asp);
         setWorkspaceMode(wm);
         setBaseDir(bd);
         setSubscriptionsEnabled(subs);
         setTeam(tm);
         setMemberDescribe(md);
-        setInitial({ systemPrompt: sp, workspaceMode: wm, baseDir: bd, subscriptionsEnabled: subs, team: tm, memberDescribe: md });
+        setTeamRosterEnabled(tre);
+        setInitial({ systemPrompt: sp, appendSystemPrompt: asp, workspaceMode: wm, baseDir: bd, subscriptionsEnabled: subs, team: tm, memberDescribe: md, teamRosterEnabled: tre });
         setProviderRefs(proj.value.provider_refs || []);
         const afMap: Record<string, string> = {};
         proj.value.platform_configs?.forEach(pc => {
@@ -233,11 +239,13 @@ export default function ProjectDetail() {
         // Startup-only fields: send only when changed so unrelated saves
         // don't trigger a restart prompt.
         ...(systemPrompt !== initial.systemPrompt ? { system_prompt: systemPrompt } : {}),
+        ...(appendSystemPrompt !== initial.appendSystemPrompt ? { append_system_prompt: appendSystemPrompt } : {}),
         ...(workspaceMode !== initial.workspaceMode ? { workspace_mode: workspaceMode } : {}),
         ...(baseDir !== initial.baseDir ? { base_dir: baseDir } : {}),
         ...(subscriptionsEnabled !== initial.subscriptionsEnabled ? { subscriptions_enabled: subscriptionsEnabled } : {}),
         ...(team !== initial.team ? { team } : {}),
         ...(memberDescribe !== initial.memberDescribe ? { member_describe: memberDescribe } : {}),
+        ...(teamRosterEnabled !== initial.teamRosterEnabled ? { team_roster_enabled: teamRosterEnabled } : {}),
       });
       if (res && (res as any).restart_required) {
         setShowRestartModal(true);
@@ -260,8 +268,10 @@ export default function ProjectDetail() {
     try {
       const res = await previewSystemPrompt(name, {
         system_prompt: systemPrompt,
+        append_system_prompt: appendSystemPrompt,
         team,
         member_describe: memberDescribe,
+        team_roster_enabled: teamRosterEnabled,
       });
       setPreviewText(res.composed);
     } catch (e: any) {
@@ -631,13 +641,26 @@ export default function ProjectDetail() {
                 placeholder={t('projects.systemPromptPlaceholder', 'Optional custom system prompt for this project')}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
               />
-              <p className="text-[11px] text-gray-400 mt-1">{t('projects.systemPromptHint', 'Sent to the agent as its system prompt. Requires restart.')}</p>
+              <p className="text-[11px] text-gray-400 mt-1">{t('projects.systemPromptHint', 'Overrides the agent default system prompt. Prefer append prompt unless you need replacement. Requires restart.')}</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                {t('projects.appendSystemPrompt', 'Append system prompt')}
+              </label>
+              <textarea
+                value={appendSystemPrompt}
+                onChange={(e) => setAppendSystemPrompt(e.target.value)}
+                rows={4}
+                placeholder={t('projects.appendSystemPromptPlaceholder', 'Extra instructions appended after the agent default prompt')}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">{t('projects.appendSystemPromptHint', 'Keeps the agent default system prompt and appends these instructions. Requires restart.')}</p>
               <button
                 type="button"
                 onClick={handlePreviewSystemPrompt}
                 className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
               >
-                <Eye size={13} /> {t('projects.previewSystemPrompt', 'Preview composed system prompt')}
+                <Eye size={13} /> {t('projects.previewSystemPrompt', 'Preview composed prompt')}
               </button>
             </div>
             <Input
@@ -647,6 +670,19 @@ export default function ProjectDetail() {
               placeholder={t('projects.teamPlaceholder', 'Team name (empty = no team)')}
             />
             {team.trim() && (
+              <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('projects.teamRosterEnabled', 'Auto-inject team roster')}</label>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{t('projects.teamRosterEnabledHint', 'Append teammates and @ mention hints to append_system_prompt at startup.')}</p>
+                </div>
+                <button
+                  onClick={() => setTeamRosterEnabled(!teamRosterEnabled)}
+                  className={cn('w-10 h-6 rounded-full transition-colors', teamRosterEnabled ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-700')}
+                >
+                  <div className={cn('w-4 h-4 bg-white rounded-full transition-transform mx-1', teamRosterEnabled ? 'translate-x-4' : 'translate-x-0')} />
+                </button>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                   {t('projects.memberDescribe', 'Member description')}
@@ -658,8 +694,9 @@ export default function ProjectDetail() {
                   placeholder={t('projects.memberDescribePlaceholder', "This member's role/function within the team")}
                   className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-accent/50 resize-y"
                 />
-                <p className="text-[11px] text-gray-400 mt-1">{t('projects.memberDescribeHint', 'Required when Team is set. Auto-injected into system_prompt (with teammates’ roster) at startup. Requires restart.')}</p>
+                <p className="text-[11px] text-gray-400 mt-1">{t('projects.memberDescribeHint', 'Required when Team is set. Team roster is appended to append_system_prompt at startup when enabled. Requires restart.')}</p>
               </div>
+              </>
             )}
           </div>
         </Card>

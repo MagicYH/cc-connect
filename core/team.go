@@ -59,6 +59,15 @@ func (r *TeamRegistry) Compose(selfProject, team, memberDescribe, base string) s
 	if team == "" {
 		return base
 	}
+	return strings.TrimRight(base, "\n") + "\n\n" + r.RosterPrompt(selfProject, team, memberDescribe)
+}
+
+// RosterPrompt returns only the auto-injected team roster block.
+func (r *TeamRegistry) RosterPrompt(selfProject, team, memberDescribe string) string {
+	team = strings.TrimSpace(team)
+	if team == "" {
+		return ""
+	}
 
 	var self TeamMember
 	var mates []TeamMember
@@ -76,8 +85,6 @@ func (r *TeamRegistry) Compose(selfProject, team, memberDescribe, base string) s
 	sort.Slice(mates, func(i, j int) bool { return mates[i].Project < mates[j].Project })
 
 	var b strings.Builder
-	b.WriteString(strings.TrimRight(base, "\n"))
-	b.WriteString("\n\n")
 	b.WriteString(TeamPromptMarker)
 	b.WriteString("\n")
 	if self.AppName != "" {
