@@ -3,7 +3,29 @@
 # 配置来源（优先级）：环境变量 BOARD_BASE/TBL_TASKS/TBL_PROJECTS > ~/.cc-connect/board.env
 set -euo pipefail
 BOARD_ENV="${BOARD_ENV:-$HOME/.cc-connect/board.env}"
-[ -f "$BOARD_ENV" ] && source "$BOARD_ENV"
+load_board_env(){
+  local file="$1" line key value
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      BOARD_*|TBL_*|BOT_APPID_*|BOT_OPENID_*|BOT_LABEL_*|BOARD_WRITER_OPENID|INITIATOR_OPENID|TASK_TIMEOUT_MINUTES)
+        if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+          value="${value:1:${#value}-2}"
+        elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+          value="${value:1:${#value}-2}"
+        fi
+        printf -v "$key" '%s' "$value"
+        export "$key"
+        ;;
+    esac
+  done < "$file"
+}
+load_board_env "$BOARD_ENV"
 : "${BOARD_BASE:?BOARD_BASE not set (write ~/.cc-connect/board.env or export it)}"
 : "${TBL_TASKS:?TBL_TASKS not set}"
 ROLE="${CC_PROJECT:?CC_PROJECT not set (must run inside a cc-connect agent session)}"
@@ -94,5 +116,28 @@ rec_upsert(){
   echo "UPSERT_RETRY_EXHAUSTED" >&2; return 1
 }
 
-# list_rows → 全表 JSON（含 .data.fields 与 .data.data[] 与 .data.record_id_list[]）
-list_rows(){ lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$TBL_TASKS" --format json --as user | _json; }
+# list_table_rows <table_id> → 全表 JSON（含 .data.fields 与 .data.data[] 与 .data.record_id_list[]）
+list_table_rows(){
+  local table="$1" offset=0 page pages="" has_more count
+  while :; do
+    page=$(lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$table" --format json --as user --offset "$offset" | _json)
+    pages="$pages$page
+"
+    has_more=$(echo "$page" | jq -r '.data.has_more // false')
+    [ "$has_more" = "true" ] || break
+    count=$(echo "$page" | jq -r '.data.record_id_list | length')
+    [ "$count" -gt 0 ] || count=100
+    offset=$((offset + count))
+  done
+  printf '%s' "$pages" | jq -s '
+    reduce .[] as $p (null;
+      if . == null then $p
+      else
+        .data.data += ($p.data.data // [])
+        | .data.record_id_list += ($p.data.record_id_list // [])
+        | .data.has_more = ($p.data.has_more // false)
+      end
+    )'
+}
+
+list_rows(){ list_table_rows "$TBL_TASKS"; }

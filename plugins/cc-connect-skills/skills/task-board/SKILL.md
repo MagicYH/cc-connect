@@ -12,6 +12,8 @@ description: Use when this bot works on the shared bitable task board (任务看
 | 脚本 | 用途 | 关键输出 |
 |---|---|---|
 | `scripts/board-my-todos.sh` | 列我的待办 + 可回收的超时进行中 | TSV: rid 类别 子任务 主任务 工作群 |
+| `scripts/board-project-context.sh <rid>` | 读取 Projects 需求描述 + 当前任务 + 来源任务/上游产出 | Markdown 上下文 |
+| `scripts/board-chat-history.sh <rid> [limit\|all]` | 默认拉取本群最近 50 条消息供 subagent 总结；显式传 `all` 才分页拉全量历史 | Markdown 群历史 |
 | `scripts/board-claim.sh <rid>` | 令牌锁认领（含抖动+回读校验） | `CLAIMED <nonce>`；失败 exit 1 |
 | `scripts/board-reclaim.sh <rid>` | 回收心跳超时的进行中 | `RECLAIMED <nonce>`；未超时拒绝 |
 | `scripts/board-heartbeat.sh <rid> <nonce>` | fenced 心跳刷新（**可选**：心跳已由 Boss 从群消息自动推导，通常无需你手动发） | `FENCED`=已被接管，立即放弃 |
@@ -29,11 +31,12 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 1. `board-my-todos.sh` → 无输出则直接结束。
 2. TODO 行：`board-claim.sh`；RECLAIM 行：`board-reclaim.sh`。失败（LOST/NOT_TODO）跳下一条，**不重试不抱怨**。
-3. 干活。**保存 nonce**（`board-done` 收口要用）。**无需定时发心跳**——Boss 巡检会把你在群里的最近消息时间自动写成心跳，只要你在群里有产出/汇报就不会被误判超时；若某次操作返回 `FENCED`（任务已被回收/接管），立即静默放弃。
-4. 任务不属于你的职责 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派。**绝不硬做**。
-（team-leader 处理收尾验收任务时：验收通过后先 `board-complete-project.sh <主任务名>` 完成项目行，再对收尾任务行执行第 5 步的 `--last`。）
-5. **你这一整段活全部做完**再用 `board-done.sh` 收口：**先把关键信息落进文档**（下游要用的一切以文档为准），`<产出>` 传该**文档路径**（不是一句话备注）；带 `--next <别的角色> <子任务>`（交接给下一个角色）或 `--last`（没有后续角色了）——脚本自动建后继行/收尾行并 @ 唤醒，不带参数会报错。**后续若还是你自己的活，别 board-done、别给自己建任务——在当前任务里继续做完。** `--next` 的 `<角色>` 正常应是**别的角色**；给自己（同角色）仅限"停下等外部"（设计立项 / 等人类确认）场景。
-6. 回到 1，直到没有我的活。
+3. **上下文启动（干活前强制）**：`board-claim.sh` / `board-reclaim.sh` 成功后，**被看板提醒后**（看板有新任务 / 看板催办 / 看板自查），主 Agent 必须先派**异步 subagent**；把已认领的 `<rid>` 和精确命令交给 subagent：`board-chat-history.sh <rid> > .board/chat-history-<rid>.md`。subagent 不得再运行 `board-my-todos.sh`、不得 claim/reclaim，只负责执行 `board-chat-history.sh <rid>`，读取当前工作群最近消息，派 subagent 总结群历史，分析当前需要做什么、进展如何，并把总结交回主 Agent；只有明确需要恢复完整长上下文时，才把命令改成 `board-chat-history.sh <rid> all`。主 Agent 再继续处理任务。随后再运行 `mkdir -p .board && board-project-context.sh <rid> > .board/context-<rid>.md`，读完整需求、当前任务、来源任务、上游产出。只有确认“项目目标是什么、这行任务为什么存在、验收标准是什么、上游产出在哪里、群里最新进展是什么”后才开工。
+4. 干活。**保存 nonce**（`board-done` 收口要用）。**无需定时发心跳**——Boss 巡检会把你在群里的最近消息时间自动写成心跳，只要你在群里有产出/汇报就不会被误判超时；若某次操作返回 `FENCED`（任务已被回收/接管），立即静默放弃。
+5. 任务不属于你的职责、或读完上下文后仍无法判断目标/验收标准 → `board-block.sh` 写明原因 + `board-send.sh` @team-leader 求改派/补充。**绝不硬做**。
+（team-leader 处理收尾验收任务时：验收通过后先 `board-complete-project.sh <主任务名>` 完成项目行，再对收尾任务行执行第 6 步的 `--last`。）
+6. **你这一整段活全部做完**再用 `board-done.sh` 收口：**先把关键信息落进文档**（下游要用的一切以文档为准），`<产出>` 传该**文档路径**（不是一句话备注）；带 `--next <别的角色> <子任务>`（交接给下一个角色）或 `--last`（没有后续角色了）——脚本自动建后继行/收尾行并 @ 唤醒，不带参数会报错。**后续若还是你自己的活，别 board-done、别给自己建任务——在当前任务里继续做完。** `--next` 的 `<角色>` 正常应是**别的角色**；给自己（同角色）仅限"停下等外部"（设计立项 / 等人类确认）场景。
+7. 回到 1，直到没有我的活。
 
 ## 项目启动·设计先行（team-leader 专属）
 
@@ -41,7 +44,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 1. 自建设计任务并认领：`board-new-task.sh <主任务> <工作群> team-leader "需求分析与技术设计"` → `board-claim.sh`。
 2. 评估复杂度，满足任一即**复杂**：需要架构/技术选型；预计子任务 >3 个；跨多模块或服务；需求含糊、有关键取舍需发起人定夺。否则**简单**。
-3. **简单**：在工作区写 `.board/design.md`（需求理解 / 方案 / 任务拆解 / 各任务验收标准）→ `board-send.sh` 向工作群公示设计要点+文档路径（不 @）→ `board-done.sh <rid> <nonce> .board/design.md --next developer "<首个开发子任务>"` 直接开工。
+3. **简单**：在工作区写 `.board/design.md`（需求理解 / 方案 / 任务拆解 / 各任务验收标准）→ `board-send.sh` 向工作群公示设计要点+文档路径（不 @）→ `board-done.sh <rid> <nonce> .board/design.md --next developer "任务目标=<要完成的目标>；需求依据=.board/requirement.md；上游产出路径=.board/design.md；验收标准=<可执行检查>；预期产出文档=.board/dev-notes.md"` 直接开工。
 4. **复杂**：调用 superpowers 技能链（brainstorming → writing-plans，自主推进；歧义与关键取舍**列成问题清单写进设计**，不臆测）产出设计与计划文档 → `board-done.sh <rid> <nonce> <设计文档路径> --next team-leader "待发起人<open_id>确认设计后拆解派发（设计=<路径>）"` → `board-send.sh <工作群> <发起人open_id> "<设计要点+路径+问题清单，请确认后开工>"`。发起人 open_id 取自 kickoff 消息。
 5. **确认跟进任务规则**（子任务含「待发起人…确认」的行）：
    - 本次唤醒消息就是发起人的回复 → 认领：确认则 `--next developer <首个开发子任务>` 开工；有修改意见则按意见修订设计后重复第 4 步收尾。
@@ -53,6 +56,7 @@ description: Use when this bot works on the shared bitable task board (任务看
 
 - **消息只用 board-send**（自己 app 身份、token 不落盘）；@ 只用于派发与求助，其余回复不得含 `<at>`（防回环）。
 - **派发用角色键**：`--next`/`new-task` 的 `<角色>` 只能是 `team-leader`/`developer`/`tester`/`reviewer`（**角色键，不是 Bot 显示名**如 Gamma/Delta；人类说「@Gamma」时你要翻译成 `reviewer`）。脚本已归一化并对无法识别的值报错。`--next` 正常派**别的角色**（交接）；给自己（同角色）**仅限设计立项 / 等人类确认这类"停下等外部"场景**（不是把自己的连续开发拆成多任务），脚本对同角色不 @ 自己。
+- **派发任务必须写清楚**：`board-new-task` / `board-done --next` 的 `<子任务>` 不是一句标题，必须包含五项：`任务目标`、`需求依据`（通常 `.board/requirement.md` 或正式 spec/plan）、`上游产出路径`、`验收标准`、`预期产出文档`。这些内容会写入 bitable 的「子任务」字段，供非 TL 角色恢复上下文；写不清就先补设计/计划，不要派发。
 - **跨角色靠文档传递，不靠群消息**：每次交付（`board-done`）必须有**文档产物**，`<产出>` 传该文档路径（不是一句话备注）。关键信息——设计方案 / 实现说明与改动点与如何运行 / 验收标准 / 测试结果 / 遗留与风险——**必须写进工作区的文档**；群消息只做提示、不承载事实，**下游角色以文档为准开工**。区分两类落点：
   - **中间产物写进 `.board/`**（工作区根目录、随 feature、已 gitignore 不进 git，项目收尾由 `board-complete-project.sh` 自动清理）：设计→`.board/design.md`；开发说明→`.board/dev-notes.md`；测试报告→`.board/test-report.md`；评审结论同理。这些是 agent 间协作的脚手架，**不得**写进会入 git 的 `docs/`，以免污染交付仓库。
   - **正式交付物走正常提交路径**（会进 git、留存）：产品代码、`README` 等产品文档。复杂项目走 superpowers 设计链时，其 `docs/superpowers/specs|plans/…` 即正式设计/计划产物，直接用作 `board-done` 的 `<产出>` 路径，无需在 `.board/` 另写一份。

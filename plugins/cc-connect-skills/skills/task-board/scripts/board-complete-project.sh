@@ -5,7 +5,7 @@ source "$(dirname "$0")/board-lib.sh"
 MT="${1:?usage: board-complete-project.sh <主任务名>}"
 : "${TBL_PROJECTS:?TBL_PROJECTS not set}"
 
-J=$(lark-cli base +record-list --base-token "$BOARD_BASE" --table-id "$TBL_PROJECTS" --format json --as user)
+J=$(list_table_rows "$TBL_PROJECTS")
 MATCHES=()
 while IFS= read -r _line; do [ -n "$_line" ] && MATCHES+=("$_line"); done < <(echo "$J" | jq -r --arg mt "$MT" '.data as $d | (($d.fields | index("主任务名")) // error("PROJECT_FIELD_MISSING 主任务名")) as $i | $d.record_id_list | to_entries[] | .key as $k | ($d.data[$k]) as $row | select(($row[$i] // "")==$mt) | .value')
 [ "${#MATCHES[@]}" -gt 0 ] || { echo "PROJECT_NOT_FOUND $MT" >&2; exit 1; }
@@ -29,8 +29,11 @@ CHAT=$(echo "$J" | jq -r --arg rid "$RID" '
     end' 2>/dev/null || true)
 if [ -n "$CHAT" ]; then
   WS=$(resolve_workspace "$CHAT")
-  if [ -n "$WS" ] && [ -d "$WS/.board" ]; then
-    rm -rf "$WS/.board" && echo "cleaned_artifacts=$WS/.board" || echo "WARN: 清理中间产物失败: $WS/.board" >&2
+  if [[ "$WS" = /* ]] && [ -d "$WS" ]; then
+    WS_REAL=$(cd -- "$WS" && pwd -P)
+    if [ -n "$WS_REAL" ] && [ "$WS_REAL" != "/" ] && [ -d "$WS_REAL/.board" ]; then
+      rm -rf -- "$WS_REAL/.board" && echo "cleaned_artifacts=$WS_REAL/.board" || echo "WARN: 清理中间产物失败: $WS_REAL/.board" >&2
+    fi
   fi
 fi
 

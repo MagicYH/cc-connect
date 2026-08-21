@@ -14,7 +14,6 @@ func TestBoardCompleteProjectMarksMatchingProjectCompleted(t *testing.T) {
 	harness := newBoardCompleteProjectHarness(t, `{"data":{"fields":["主任务名","项目状态","完成时间"],"record_id_list":["rec_other","rec_project"],"data":[["other-project","进行中",null],["goal-e2e-1784176632","进行中",null]]}}`)
 
 	output, err := harness.run("goal-e2e-1784176632")
-
 	if err != nil {
 		t.Fatalf("expected project completion to succeed; output:\n%s", output)
 	}
@@ -69,6 +68,23 @@ func TestBoardCompleteProjectFailsWhenProjectNameIsAmbiguous(t *testing.T) {
 		t.Fatalf("expected ambiguous project error with matching record ids; output:\n%s", output)
 	}
 	harness.assertNoUpsert()
+}
+
+func TestBoardCompleteProjectReadsAllRecordListPages(t *testing.T) {
+	harness := newBoardCompleteProjectHarness(t, `{"data":{"fields":["主任务名","项目状态","完成时间"],"record_id_list":["rec_other"],"data":[["other-project","进行中",null]],"has_more":true}}`)
+	secondPage := `{"data":{"fields":["主任务名","项目状态","完成时间"],"record_id_list":["rec_project_second_page"],"data":[["goal-e2e-1784176632","进行中",null]],"has_more":false}}`
+
+	output, err := harness.runWithEnv("goal-e2e-1784176632", "RECORD_LIST_JSON_OFFSET_1="+secondPage)
+	if err != nil {
+		t.Fatalf("expected project completion to find second page; output:\n%s", output)
+	}
+	if strings.TrimSpace(output) != "PROJECT_DONE rec_project_second_page" {
+		t.Fatalf("expected second-page project completion; output:\n%s", output)
+	}
+	upsert := harness.readUpsertArgs()
+	if !strings.Contains(upsert, "--record-id rec_project_second_page") {
+		t.Fatalf("expected second-page record upsert; got:\n%s", upsert)
+	}
 }
 
 func TestBoardCompleteProjectCleansGitignoredBoardArtifacts(t *testing.T) {
@@ -137,7 +153,18 @@ if [[ "$*" == *"base +record-list"* ]]; then
   [[ "$*" == *"--table-id tbl_projects"* ]] || { printf 'record-list must use Projects table: %s\n' "$*" >&2; exit 1; }
   [[ "$*" == *"--format json"* ]] || { printf 'record-list must request json: %s\n' "$*" >&2; exit 1; }
   [[ "$*" == *"--as user"* ]] || { printf 'record-list must run as user: %s\n' "$*" >&2; exit 1; }
-  printf '%s\n' "$RECORD_LIST_JSON"
+  offset=0
+  prev=''
+  for arg in "$@"; do
+    if [[ "$prev" == "--offset" ]]; then offset="$arg"; fi
+    prev="$arg"
+  done
+  page_var="RECORD_LIST_JSON_OFFSET_${offset}"
+  if [[ -n "${!page_var:-}" ]]; then
+    printf '%s\n' "${!page_var}"
+  else
+    printf '%s\n' "$RECORD_LIST_JSON"
+  fi
 elif [[ "$*" == *"base +record-upsert"* ]]; then
   [[ "$*" == *"--base-token base_token"* ]] || { printf 'record-upsert must use board base: %s\n' "$*" >&2; exit 1; }
   [[ "$*" == *"--table-id tbl_projects"* ]] || { printf 'record-upsert must use Projects table: %s\n' "$*" >&2; exit 1; }
@@ -171,8 +198,14 @@ fi
 
 func (h boardCompleteProjectHarness) run(projectName string) (string, error) {
 	h.t.Helper()
+	return h.runWithEnv(projectName)
+}
+
+func (h boardCompleteProjectHarness) runWithEnv(projectName string, extraEnv ...string) (string, error) {
+	h.t.Helper()
 	cmd := exec.Command(filepath.Join(h.scriptDir, "board-complete-project.sh"), projectName)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"HOME="+h.homeDir,
 		"PATH="+h.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"CC_PROJECT=team-leader",
@@ -180,6 +213,7 @@ func (h boardCompleteProjectHarness) run(projectName string) (string, error) {
 		"UPSERT_ARGS_LOG="+h.upsertArgs,
 		"UPSERT_JSON_LOG="+h.upsertJSON,
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -51,15 +51,15 @@ cc-connect daemon restart
 - 主任务 = 项目名（与 Projects 表「主任务名」一致）
 - 工作群 = 点选对应项目群（Group 字段，可点击跳群）
 - 角色 = 选执行者，如 `Delta (developer)`
-- 子任务 = 具体要做的事（写清验收标准更好）
+- 子任务 = 具体要做的事；必须写清 `任务目标`、`需求依据`、`上游产出路径`、`验收标准`、`预期产出文档`
 - 状态 = `待办`
 
 然后二选一唤醒：在项目群里 @ 对应 bot 说"看板有新任务"；或什么都不做，等 cron 自查（≤30 分钟）自动认领。
 
 **方式二：bot 在会话里建**（bot 间接力派发即此路径）
 ```bash
-scripts/board-new-task.sh <主任务> <工作群> <角色> "<子任务>" [来源rid]   # 输出新行 rid
-scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：<子任务>"      # 立即唤醒
+scripts/board-new-task.sh <主任务> <工作群> <角色> "任务目标=<目标>；需求依据=<路径>；上游产出路径=<路径>；验收标准=<检查>；预期产出文档=<路径>" [来源rid]
+scripts/board-send.sh <工作群> <对方open_id> "看板有新任务：请先读 task-board 上下文再开工"
 ```
 角色传纯名（如 `tester`）即可，脚本自动映射为 `Zero (tester)` 标签。
 
